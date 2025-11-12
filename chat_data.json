@@ -79,11 +79,12 @@
     }
   },
   "statistics": {
-    "total_conversations": 108,
+    "total_conversations": 267,
     "learned_responses": 19,
     "user_interactions": {
-      "Crepa": 107,
-      "exit": 1
+      "Crepa": 265,
+      "exit": 1,
+      "default": 1
     }
   },
   "created_time": "2025-11-12 11:09:06",
