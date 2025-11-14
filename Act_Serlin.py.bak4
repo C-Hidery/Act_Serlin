@@ -1,0 +1,1866 @@
+# Serlin-nano By Ryan Crepa
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
+import json
+import sqlite3
+import pickle
+import hashlib
+from collections import defaultdict, deque, OrderedDict
+import datetime
+
+class LongTermMemory:
+    """长期记忆系统"""
+    
+    def __init__(self, db_path="memory.db"):
+        self.db_path = db_path
+        self.init_database()
+        
+    def init_database(self):
+        """初始化记忆数据库"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # 用户信息表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                personality_profile TEXT,
+                preferences TEXT,
+                created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 对话记忆表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                input_text TEXT,
+                response_text TEXT,
+                sentiment REAL,
+                topics TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # 知识记忆表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_text TEXT UNIQUE,
+                value_text TEXT,
+                confidence REAL,
+                source TEXT,
+                last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # 自我反思表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS reflections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER,
+                reflection_text TEXT,
+                improvement_suggestions TEXT,
+                quality_score REAL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations (id)
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def store_conversation(self, user_id, input_text, response_text, sentiment, topics):
+        """存储对话记录"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+    
+        # 确保用户存在
+        cursor.execute('INSERT OR IGNORE INTO users (user_id) VALUES (?)', (user_id,))
+    
+        # 修复：正确处理情感张量
+        if isinstance(sentiment, torch.Tensor):
+            # 如果是多分类情感，取正面情感的概率
+            if sentiment.dim() > 1:
+                sentiment_value = torch.softmax(sentiment, dim=-1)[0, 1].item()  # 假设索引1是正面情感
+            else:
+                sentiment_value = sentiment.mean().item()
+        else:
+            sentiment_value = float(sentiment)
+    
+        cursor.execute('''
+            INSERT INTO conversations (user_id, input_text, response_text, sentiment, topics)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, input_text, response_text, sentiment_value, json.dumps(topics)))
+    
+        conn.commit()
+        conn.close()
+    def get_user_history(self, user_id, limit=10):
+        """获取用户对话历史"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT input_text, response_text, sentiment, topics, timestamp
+            FROM conversations 
+            WHERE user_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        ''', (user_id, limit))
+        
+        results = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            'input': row[0],
+            'response': row[1],
+            'sentiment': row[2],
+            'topics': json.loads(row[3]),
+            'timestamp': row[4]
+        } for row in results]
+    
+    def store_knowledge(self, key, value, confidence=1.0, source="conversation"):
+        """存储知识"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO knowledge (key_text, value_text, confidence, source, last_accessed)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (key, value, confidence, source))
+        
+        conn.commit()
+        conn.close()
+    
+    def retrieve_knowledge(self, key):
+        """检索知识"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT value_text, confidence FROM knowledge 
+            WHERE key_text = ? AND confidence > 0.5
+            ORDER BY confidence DESC
+        ''', (key,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            # 更新访问时间
+            self.update_knowledge_access(key)
+            return result[0], result[1]
+        return None, 0.0
+    
+    def update_knowledge_access(self, key):
+        """更新知识访问时间"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE knowledge SET last_accessed = CURRENT_TIMESTAMP 
+            WHERE key_text = ?
+        ''', (key,))
+        
+        conn.commit()
+        conn.close()
+    
+    def store_reflection(self, conversation_id, reflection, suggestions, quality_score):
+        """存储自我反思"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO reflections (conversation_id, reflection_text, improvement_suggestions, quality_score)
+            VALUES (?, ?, ?, ?)
+        ''', (conversation_id, reflection, suggestions, quality_score))
+        
+        conn.commit()
+        conn.close()
+
+class KnowledgeBase:
+    """知识库系统"""
+    
+    def __init__(self, memory_system):
+        self.memory = memory_system
+        self.domain_knowledge = self.load_domain_knowledge()
+    
+    def load_domain_knowledge(self):
+        """加载领域知识"""
+        return {
+            "technology": {
+                "python": "Python是一种高级编程语言，以简洁易读著称",
+                "ai": "人工智能是计算机科学的一个分支，致力于创造智能机器",
+                "machine learning": "机器学习是AI的子领域，让计算机从数据中学习"
+            },
+            "entertainment": {
+                "movies": "电影是一种重要的娱乐形式",
+                "music": "音乐可以表达情感和创造氛围",
+                "games": "游戏可以提供娱乐和挑战"
+            }
+        }
+    
+    def query_knowledge(self, query, domain=None):
+        """查询知识"""
+        # 先从长期记忆查询
+        knowledge, confidence = self.memory.retrieve_knowledge(query)
+        if knowledge:
+            return knowledge, confidence
+        
+        # 从领域知识查询
+        if domain and domain in self.domain_knowledge:
+            if query in self.domain_knowledge[domain]:
+                return self.domain_knowledge[domain][query], 0.8
+        
+        # 从通用领域知识查询
+        for domain_knowledge in self.domain_knowledge.values():
+            if query in domain_knowledge:
+                return domain_knowledge[query], 0.7
+        
+        return None, 0.0
+    
+    def learn_from_conversation(self, user_input, response):
+        """从对话中学习新知识"""
+        # 简单的关键词提取（实际应用中可以使用更复杂的NLP技术）
+        words = user_input.lower().split()
+        for word in words:
+            if len(word) > 3:  # 只学习较长的词
+                # 如果这个词在回应中出现，可能是一个重要概念
+                if word in response.lower():
+                    self.memory.store_knowledge(word, response, 0.6, "conversation_learning")
+
+class MultiTurnContext:
+    """多轮对话上下文管理"""
+    
+    def __init__(self, max_context_length=10):
+        self.max_context_length = max_context_length
+        self.conversation_context = deque(maxlen=max_context_length)
+        self.current_topics = set()
+    
+    def add_turn(self, user_input, ai_response, sentiment, extracted_topics):
+        """添加一轮对话到上下文"""
+        turn = {
+            'user_input': user_input,
+            'ai_response': ai_response,
+            'sentiment': sentiment,
+            'topics': extracted_topics,
+            'timestamp': datetime.datetime.now()
+        }
+        self.conversation_context.append(turn)
+        
+        # 更新当前话题
+        self.current_topics.update(extracted_topics)
+        # 限制话题数量
+        if len(self.current_topics) > 8:
+            self.current_topics = set(list(self.current_topics)[-8:])
+    
+    def get_context_vector(self, processor):
+        """获取上下文向量表示"""
+        if not self.conversation_context:
+            return torch.zeros(1, 512)  # 默认向量
+        
+        # 将最近几轮对话编码为上下文向量
+        context_texts = []
+        for turn in list(self.conversation_context)[-3:]:  # 最近3轮
+            context_texts.extend([turn['user_input'], turn['ai_response']])
+        
+        # 简单的文本组合（实际可以使用更复杂的方法）
+        combined_text = " ".join(context_texts)
+        encoded = processor.encode(combined_text)
+        encoded_tensor = torch.tensor([encoded], dtype=torch.long)
+        
+        return encoded_tensor
+    
+    def get_recent_topics(self):
+        """获取最近的话题"""
+        return list(self.current_topics)[-5:]
+
+class PersonalityAdaptation:
+    """个性化适应系统"""
+    
+    def __init__(self, memory_system):
+        self.memory = memory_system
+        self.user_profiles = {}
+    
+    def get_user_profile(self, user_id):
+        """获取用户个性画像"""
+        conn = sqlite3.connect(self.memory.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT personality_profile, preferences FROM users WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and result[0]:
+            return json.loads(result[0]), json.loads(result[1])
+        else:
+            # 默认个性画像
+            default_profile = {
+                "formality": 0.5,
+                "humor_level": 0.3,
+                "detail_level": 0.6,
+                "empathy_level": 0.7,
+                "curiosity_level": 0.5
+            }
+            default_prefs = {
+                "preferred_topics": [],
+                "avoided_topics": [],
+                "communication_style": "balanced"
+            }
+            return default_profile, default_prefs
+    
+    def update_user_profile(self, user_id, user_input, response, sentiment):
+        """基于对话更新用户画像"""
+        profile, prefs = self.get_user_profile(user_id)
+        
+        # 分析用户输入特征来更新画像
+        input_lower = user_input.lower()
+        
+        # 更新正式程度
+        if any(word in input_lower for word in ['您好', '请问', '麻烦']):
+            profile["formality"] = min(1.0, profile["formality"] + 0.1)
+        elif any(word in input_lower for word in ['嘿', '嗨', '哈哈']):
+            profile["formality"] = max(0.0, profile["formality"] - 0.1)
+        
+        # 更新幽默感
+        if any(word in input_lower for word in ['笑话', '搞笑', '幽默']):
+            profile["humor_level"] = min(1.0, profile["humor_level"] + 0.15)
+        
+        # 更新情感水平
+        if sentiment > 0.6:
+            profile["empathy_level"] = min(1.0, profile["empathy_level"] + 0.05)
+        
+        # 保存更新后的画像
+        conn = sqlite3.connect(self.memory.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (user_id, personality_profile, preferences)
+            VALUES (?, ?, ?)
+        ''', (user_id, json.dumps(profile), json.dumps(prefs)))
+        
+        conn.commit()
+        conn.close()
+        
+        return profile
+
+class SelfReflection:
+    """自我反思系统"""
+    
+    def __init__(self, memory_system):
+        self.memory = memory_system
+    
+    def analyze_response_quality(self, user_input, ai_response, sentiment):
+        """分析回应质量"""
+        quality_score = 0.5  # 基础分
+        
+        # 基于长度评估
+        if len(ai_response.split()) >= 5 and len(ai_response.split()) <= 50:
+            quality_score += 0.2
+        
+        # 修复：正确处理情感张量
+        if isinstance(sentiment, torch.Tensor):
+            # 如果是多分类情感，取正面情感的概率
+            if sentiment.dim() > 1:
+                sentiment_value = torch.softmax(sentiment, dim=-1)[0, 1].item()  # 假设索引1是正面情感
+            else:
+                sentiment_value = sentiment.mean().item()
+        else:
+            sentiment_value = float(sentiment)
+        
+        # 基于情感一致性
+        if sentiment_value > 0.3 and sentiment_value < 0.8:
+            quality_score += 0.1
+        
+        # 基于问题相关性（简单实现）
+        user_words = set(user_input.lower().split())
+        response_words = set(ai_response.lower().split())
+        common_words = user_words.intersection(response_words)
+        if len(common_words) > 0:
+            quality_score += 0.2
+        
+        return min(1.0, quality_score)
+    
+    def generate_improvement_suggestions(self, user_input, ai_response, quality_score):
+        """生成改进建议"""
+        suggestions = []
+        
+        if quality_score < 0.6:
+            if len(ai_response.split()) < 3:
+                suggestions.append("回应过于简短，可以提供更多细节")
+            elif len(ai_response.split()) > 60:
+                suggestions.append("回应可能过长，考虑更简洁表达")
+            
+            if "?" in user_input and "?" not in ai_response:
+                suggestions.append("用户的问题可能需要更直接的答案")
+        
+        return suggestions
+    
+    def reflect_on_conversation(self, conversation_id, user_input, ai_response, sentiment):
+        """对对话进行反思"""
+        quality_score = self.analyze_response_quality(user_input, ai_response, sentiment)
+        suggestions = self.generate_improvement_suggestions(user_input, ai_response, quality_score)
+        
+        reflection_text = f"回应质量评分: {quality_score:.2f}. "
+        if suggestions:
+            reflection_text += "改进建议: " + "; ".join(suggestions)
+        else:
+            reflection_text += "这次回应质量不错。"
+        
+        # 存储反思结果
+        self.memory.store_reflection(conversation_id, reflection_text, 
+                                   json.dumps(suggestions), quality_score)
+        
+        return reflection_text, suggestions, quality_score
+    # 删除以下重复的方法定义：
+    # def generate_improvement_suggestions(self, user_input, ai_response, quality_score):
+    # def reflect_on_conversation(self, conversation_id, user_input, ai_response, sentiment):
+
+class EnhancedThinkingLayer(nn.Module):
+    """增强的思考层 - 包含记忆和知识集成"""
+    
+    def __init__(self, hidden_size, think_steps=3, knowledge_dim=100):
+        super(EnhancedThinkingLayer, self).__init__()
+        self.think_steps = think_steps
+        self.knowledge_dim = knowledge_dim
+        self.hidden_size = hidden_size
+        
+        # 思考投影层 - 输入是上下文、思考状态、知识和记忆向量的拼接
+        projection_input_dim = hidden_size * 2 + knowledge_dim * 2
+        self.thought_projection = nn.Linear(projection_input_dim, hidden_size)
+        
+        # 思考LSTM
+        self.thought_lstm = nn.LSTM(hidden_size, hidden_size, batch_first=True)
+        
+        # 自注意力机制
+        self.thought_attention = nn.MultiheadAttention(hidden_size, num_heads=4)
+        
+        # 知识集成层
+        self.knowledge_encoder = nn.Linear(knowledge_dim, knowledge_dim)
+        
+        # 记忆集成层
+        self.memory_encoder = nn.Linear(knowledge_dim, knowledge_dim)
+        
+        # 融合层
+        self.fusion_layer = nn.Linear(hidden_size + knowledge_dim * 2, hidden_size)
+    
+    def forward(self, context, initial_thought, knowledge_vectors=None, memory_vectors=None):
+        batch_size = context.size(0)
+        seq_len = context.size(1)
+        
+        # 处理知识向量
+        if knowledge_vectors is not None:
+            # 编码知识向量
+            encoded_knowledge = torch.tanh(self.knowledge_encoder(knowledge_vectors))
+            # 扩展知识向量以匹配序列长度
+            knowledge_expanded = encoded_knowledge.unsqueeze(1).expand(-1, seq_len, -1)
+        else:
+            knowledge_expanded = torch.zeros(batch_size, seq_len, self.knowledge_dim).to(context.device)
+        
+        # 处理记忆向量
+        if memory_vectors is not None:
+            # 编码记忆向量
+            encoded_memory = torch.tanh(self.memory_encoder(memory_vectors))
+            # 扩展记忆向量以匹配序列长度
+            memory_expanded = encoded_memory.unsqueeze(1).expand(-1, seq_len, -1)
+        else:
+            memory_expanded = torch.zeros(batch_size, seq_len, self.knowledge_dim).to(context.device)
+        
+        # 初始思考状态
+        thoughts = [initial_thought.unsqueeze(1)]  # [batch_size, 1, hidden_size]
+        
+        for step in range(self.think_steps):
+            current_thought = thoughts[-1]
+            
+            # 思考与上下文关联，集成知识和记忆
+            thought_expanded = current_thought.repeat(1, seq_len, 1)
+            
+            # 拼接所有信息：上下文、思考、知识、记忆
+            combined_input = torch.cat([
+                context, 
+                thought_expanded, 
+                knowledge_expanded,
+                memory_expanded
+            ], dim=-1)
+            
+            # 投影到思考空间
+            projected_thought = torch.tanh(self.thought_projection(combined_input))
+            
+            # 自注意力思考过程
+            thought_attn, _ = self.thought_attention(
+                projected_thought.transpose(0, 1),
+                projected_thought.transpose(0, 1),
+                projected_thought.transpose(0, 1)
+            )
+            
+            # 更新思考状态
+            new_thought, _ = self.thought_lstm(thought_attn.transpose(0, 1))
+            
+            # 融合知识和记忆到新的思考状态
+            if knowledge_vectors is not None or memory_vectors is not None:
+                fusion_input = torch.cat([
+                    new_thought[:, -1:, :],  # 取最后一个时间步
+                    encoded_knowledge.unsqueeze(1) if knowledge_vectors is not None else torch.zeros(batch_size, 1, self.knowledge_dim).to(context.device),
+                    encoded_memory.unsqueeze(1) if memory_vectors is not None else torch.zeros(batch_size, 1, self.knowledge_dim).to(context.device)
+                ], dim=-1)
+                
+                new_thought = torch.tanh(self.fusion_layer(fusion_input))
+            
+            # 确保维度一致
+            thoughts.append(new_thought)
+        
+        # 正确拼接思考结果
+        if len(thoughts) > 1:
+            final_thoughts = torch.cat(thoughts[1:], dim=1)
+        else:
+            final_thoughts = thoughts[0]
+            
+        return final_thoughts
+class EnhancedReflectiveDialogueAI(nn.Module):
+    """增强版可思考对话Serlin"""
+    
+    def __init__(self, vocab_size, embedding_dim=256, hidden_size=512, 
+                 think_steps=3, max_length=50, knowledge_dim=100):
+        super(EnhancedReflectiveDialogueAI, self).__init__()
+        
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.think_steps = think_steps
+        self.max_length = max_length
+        self.knowledge_dim = knowledge_dim
+        
+        # 词嵌入层
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        
+        # 上下文编码器
+        self.context_encoder = nn.LSTM(embedding_dim, hidden_size, 
+                                     batch_first=True, bidirectional=True)
+        
+        # 增强思考模块
+        self.thinking_layer = EnhancedThinkingLayer(
+            hidden_size=hidden_size, 
+            think_steps=think_steps, 
+            knowledge_dim=knowledge_dim
+        )
+        
+        # 思考融合层（移除重复定义）
+        self.thought_fusion = nn.Linear(hidden_size * think_steps, hidden_size)
+        
+        # 个性化适配器（移除重复定义）
+        personality_input_dim = hidden_size * 2 + 5  # 双向LSTM + 5个个性特征
+        self.personality_adapter = nn.Linear(personality_input_dim, hidden_size)
+        
+        # 知识处理层
+        self.knowledge_encoder = nn.Linear(100, knowledge_dim)
+        
+        # 回应解码器
+        self.decoder_lstm = nn.LSTM(hidden_size + embedding_dim + knowledge_dim, hidden_size, 
+                                  batch_first=True)
+        self.output_projection = nn.Linear(hidden_size, vocab_size)
+        
+        # 思考表示层
+        self.thought_representation = nn.Linear(hidden_size, 64)
+        
+        # 情感和风格分析
+        self.sentiment_analysis = nn.Linear(hidden_size, 3)
+        self.style_analysis = nn.Linear(hidden_size, 4)
+        self.topic_analysis = nn.Linear(hidden_size, 10)  # 10个主题类别
+        
+    def forward(self, input_seq, target_seq=None, knowledge_vector=None, 
+                memory_vector=None, personality_vector=None, teacher_forcing_ratio=0.5):  # 添加 memory_vector 参数
+        batch_size = input_seq.size(0)
+        if input_seq.max() >= self.vocab_size:
+            print(f"错误: 输入索引超出范围! max_index={input_seq.max()}, vocab_size={self.vocab_size}")
+            return {
+                'output': torch.zeros(input_seq.size(0), self.max_length, self.vocab_size),
+                'thoughts': None,
+                'thought_processes': [],
+                'sentiment': torch.zeros(input_seq.size(0), 3),
+                'style': torch.zeros(input_seq.size(0), 4),
+                'topics': torch.zeros(input_seq.size(0), 10),
+                'final_thought': torch.zeros(input_seq.size(0), self.hidden_size)
+            }
+        # 编码输入序列
+        input_embedded = self.embedding(input_seq)
+        context_output, (hidden, cell) = self.context_encoder(input_embedded)
+        
+        # 获取上下文表示
+        context_representation = torch.cat([hidden[0], hidden[1]], dim=-1)
+        
+        # 准备知识向量
+        if knowledge_vector is None:
+            knowledge_vector = torch.zeros(batch_size, self.knowledge_dim)
+        
+        # 准备记忆向量
+        if memory_vector is None:
+            memory_vector = torch.zeros(batch_size, self.knowledge_dim)
+        
+        # 准备个性化向量
+        if personality_vector is None:
+            personality_vector = torch.ones(batch_size, 5) * 0.5  # 默认个性
+        
+        # 思考过程
+        context_unidirectional = context_output[:, :, :self.hidden_size]
+        initial_thought = context_representation
+        
+        # 结合个性化
+        thought_with_personality = torch.cat([initial_thought, personality_vector], dim=-1)
+        adapted_thought = torch.tanh(self.personality_adapter(thought_with_personality))
+        
+        # 传递记忆向量给思考层
+        thoughts = self.thinking_layer(context_unidirectional, adapted_thought, 
+                                     knowledge_vector, memory_vector)  # 传入 memory_vector
+        
+        # 融合思考结果
+        thoughts_flat = thoughts.reshape(batch_size, -1)
+        final_thought = torch.tanh(self.thought_fusion(thoughts_flat))
+        
+        # 解码回应
+        if target_seq is not None:
+            target_embedded = self.embedding(target_seq)
+            seq_len = target_seq.size(1)
+        else:
+            seq_len = self.max_length
+        
+        decoder_hidden = final_thought.unsqueeze(0)
+        decoder_cell = torch.zeros_like(decoder_hidden)
+        
+        outputs = []
+        thought_processes = []
+        
+        decoder_input = torch.zeros(batch_size, 1, dtype=torch.long).to(input_seq.device)
+        
+        for t in range(seq_len):
+            decoder_input_embedded = self.embedding(decoder_input)
+            
+            thought_expanded = final_thought.unsqueeze(1).expand(-1, decoder_input_embedded.size(1), -1)
+            knowledge_expanded = knowledge_vector.unsqueeze(1).expand(-1, decoder_input_embedded.size(1), -1)
+            
+            decoder_combined = torch.cat([decoder_input_embedded, thought_expanded, knowledge_expanded], dim=-1)
+            
+            decoder_output, (decoder_hidden, decoder_cell) = self.decoder_lstm(
+                decoder_combined, (decoder_hidden, decoder_cell)
+            )
+            
+            output = self.output_projection(decoder_output)
+            outputs.append(output)
+            
+            thought_rep = self.thought_representation(final_thought)
+            thought_processes.append(thought_rep.detach().cpu().numpy())
+            
+            if target_seq is not None and random.random() < teacher_forcing_ratio:
+                decoder_input = target_seq[:, t].unsqueeze(1)
+            else:
+                _, topi = output.topk(1)
+                decoder_input = topi.squeeze(-1).detach()
+        
+        outputs = torch.cat(outputs, dim=1)
+        
+        # 分析输出
+        sentiment = self.sentiment_analysis(final_thought)
+        style = self.style_analysis(final_thought)
+        topics = self.topic_analysis(final_thought)
+        
+        return {
+            'output': outputs,
+            'thoughts': thoughts,
+            'thought_processes': thought_processes,
+            'sentiment': sentiment,
+            'style': style,
+            'topics': topics,
+            'final_thought': final_thought
+        }
+class DialogueDataProcessor:
+    """对话数据处理器"""
+    
+    def __init__(self):
+        self.word2idx = {'<PAD>': 0, '<SOS>': 1, '<EOS>': 2, '<UNK>': 3}
+        self.idx2word = {0: '<PAD>', 1: '<SOS>', 2: '<EOS>', 3: '<UNK>'}
+        self.vocab_size = 4
+        
+    def build_vocab(self, dialogues, min_freq=1):
+        """构建词汇表"""
+        word_freq = defaultdict(int)
+    
+        for dialogue in dialogues:
+            for text in [dialogue['input'], dialogue['output']]:
+                words = self.tokenize(text)  # 使用修复后的分词
+                for word in words:
+                    word_freq[word] += 1
+    
+        print(f"发现 {len(word_freq)} 个不同的词")
+    
+        # 添加特殊标记
+        special_tokens = ['<PAD>', '<SOS>', '<EOS>', '<UNK>']
+        for token in special_tokens:
+            self.word2idx[token] = len(self.word2idx)
+            self.idx2word[len(self.idx2word)] = token
+    
+        # 添加所有词
+        for word, freq in word_freq.items():
+            if freq >= min_freq and word not in self.word2idx:
+                self.word2idx[word] = len(self.word2idx)
+                self.idx2word[len(self.idx2word)] = word
+    
+        self.vocab_size = len(self.word2idx)
+        print(f"词汇表构建完成，大小: {self.vocab_size}")
+        print(f"示例词汇: {list(self.word2idx.keys())[:20]}")
+    
+        return self.vocab_size
+    def auto_expand_vocab(self, text, min_freq=1):
+        """自动扩展词汇表 - 修复版"""
+        new_words = []
+        words = self.tokenize(text)
+    
+        for word in words:
+            # 跳过空词和特殊标记
+            if not word.strip() or word in ['<PAD>', '<SOS>', '<EOS>', '<UNK>']:
+                continue
+            
+            if word not in self.word2idx:
+                # 检查词汇表是否达到上限（可选）
+                if self.vocab_size >= 10000:  # 设置一个合理的上限
+                    print(f"警告: 词汇表已达到上限 {self.vocab_size}，跳过添加新词")
+                    continue
+                
+                # 添加新词到词汇表
+                self.word2idx[word] = self.vocab_size
+                self.idx2word[self.vocab_size] = word
+                self.vocab_size += 1
+                new_words.append(word)
+    
+        if new_words:
+            print(f"词汇表自动扩展: 添加了 {len(new_words)} 个新词")
+            print(f"新词: {new_words}")
+            # 保存词汇表到文件
+            self.save_vocab()
+    
+        return new_words
+
+    def save_vocab(self, file_path="vocab.json"):
+        """保存词汇表到文件"""
+        vocab_data = {
+            'word2idx': self.word2idx,
+            'idx2word': self.idx2word,
+            'vocab_size': self.vocab_size
+        }
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(vocab_data, f, ensure_ascii=False, indent=2)
+        print(f"词汇表已保存到: {file_path}")
+
+    def load_vocab(self, file_path="vocab.json"):
+        """从文件加载词汇表"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                vocab_data = json.load(f)
+        
+            self.word2idx = vocab_data['word2idx']
+            # 确保idx2word的键是整数
+            self.idx2word = {int(k): v for k, v in vocab_data['idx2word'].items()}
+            self.vocab_size = vocab_data['vocab_size']
+            print(f"词汇表已从 {file_path} 加载，大小: {self.vocab_size}")
+            return True
+        except FileNotFoundError:
+            print(f"词汇表文件 {file_path} 不存在")
+            return False
+        except Exception as e:
+            print(f"加载词汇表失败: {e}")
+            return False
+
+    def add_basic_vocabulary(self):
+        """添加基础词汇"""
+        basic_words = [
+            # 常用代词和功能词
+            '我', '你', '他', '她', '它', '我们', '你们', '他们', 
+            '这', '那', '哪', '谁', '什么', '怎么', '为什么',
+            '是', '有', '在', '的', '了', '着', '过',
+            '不', '没', '很', '非常', '真', '太',
+        
+            # 常用动词
+            '说', '问', '回答', '告诉', '知道', '想', '觉得', 
+            '可以', '能够', '会', '要', '需要', '应该',
+            '做', '学习', '帮助', '理解', '解释',
+        
+            # 常用名词
+            '问题', '答案', '事情', '东西', '时间', '地方',
+            '人', '朋友', '老师', '学生', '电脑', '手机',
+            '今天', '明天', '昨天', '现在', '以后',
+        
+            # 情感和评价词
+            '好', '坏', '对', '错', '高兴', '开心', '难过',
+            '喜欢', '爱', '讨厌', '希望', '期待',
+        
+            # 疑问词和连接词
+            '吗', '呢', '吧', '啊', '呀', '哦',
+            '因为', '所以', '但是', '然后', '如果',
+        
+            # 数字和量词
+            '一', '二', '两', '三', '四', '五', '十', '百', '千', '万',
+            '个', '只', '条', '件', '次', '些',
+        
+            # 方向和时间
+            '上', '下', '左', '右', '前', '后', '里', '外',
+            '年', '月', '日', '小时', '分钟', '秒'
+        ]
+    
+        added_count = 0
+        for word in basic_words:
+            if word not in self.word2idx:
+                self.word2idx[word] = self.vocab_size
+                self.idx2word[self.vocab_size] = word
+                self.vocab_size += 1
+                added_count += 1
+    
+        if added_count > 0:
+            print(f"添加了 {added_count} 个基础词汇")
+            self.save_vocab()
+    
+        return added_count
+    def tokenize(self, text):
+        """彻底修复的分词函数"""
+        # 如果是特殊标记，直接返回
+        special_tokens = ['<PAD>', '<SOS>', '<EOS>', '<UNK>']
+        if text in special_tokens:
+            return [text]
+    
+        tokens = []
+        i = 0
+        n = len(text)
+    
+        while i < n:
+            # 检查是否是特殊标记（以<开头>结尾）
+            if text[i] == '<' and '>' in text[i:]:
+                end = text.find('>', i) + 1
+                if end > i:
+                    potential_special = text[i:end]
+                    if potential_special in special_tokens:
+                        tokens.append(potential_special)
+                        i = end
+                        continue
+        
+            char = text[i]
+        
+            # 中文字符直接作为一个词
+            if '\u4e00' <= char <= '\u9fff':
+                tokens.append(char)
+                i += 1
+            # 英文字母组成单词
+            elif char.isalpha():
+                start = i
+                while i < n and text[i].isalpha():
+                    i += 1
+                tokens.append(text[start:i].lower())
+            # 数字
+            elif char.isdigit():
+                start = i
+                while i < n and text[i].isdigit():
+                    i += 1
+                tokens.append(text[start:i])
+            # 标点符号和其他字符
+            else:
+                if char.strip():  # 非空格字符
+                    tokens.append(char)
+                i += 1
+    
+        return tokens
+    def encode(self, text, auto_expand=True):
+        """将文本编码为索引序列，支持自动扩展词汇表"""
+        words = self.tokenize(text)
+        indices = []
+    
+        for word in words:
+            if word in self.word2idx:
+                indices.append(self.word2idx[word])
+            else:
+                if auto_expand:
+                    # 自动扩展词汇表
+                    self.auto_expand_vocab(word)
+                    indices.append(self.word2idx[word])
+                else:
+                    indices.append(self.word2idx['<UNK>'])
+    
+        return [self.word2idx['<SOS>']] + indices + [self.word2idx['<EOS>']]
+    
+    def decode(self, indices):
+        """将索引序列解码为文本"""
+        words = []
+        for idx in indices:
+            if idx == self.word2idx['<EOS>']:
+                break
+            if idx not in [self.word2idx['<PAD>'], self.word2idx['<SOS>']]:
+                words.append(self.idx2word.get(idx, '<UNK>'))
+        return ' '.join(words)
+    
+    def get_vocab_size(self):
+        """获取词汇表大小"""
+        return self.vocab_size
+
+class ThinkingDialogueTrainer:
+    """思考对话训练器"""
+    
+    def __init__(self, model, processor, learning_rate=0.001):
+        self.model = model
+        self.processor = processor
+        self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=0)  # 忽略PAD标记
+        
+    def train_epoch(self, dataloader):
+        """训练一个epoch"""
+        self.model.train()
+        total_loss = 0
+        total_batches = 0
+        
+        for batch in dataloader:
+            self.optimizer.zero_grad()
+            
+            input_seq = batch['input']
+            target_seq = batch['output']
+            
+            # 前向传播
+            outputs = self.model(input_seq, target_seq)
+            predictions = outputs['output']
+            
+            # 计算损失 - 修复维度问题
+            # predictions: [batch_size, seq_len, vocab_size]
+            # target_seq: [batch_size, seq_len]
+            pred_flat = predictions.reshape(-1, predictions.size(-1))
+            target_flat = target_seq.reshape(-1)
+            
+            main_loss = self.criterion(pred_flat, target_flat)
+            
+            # 只使用主要损失，暂时移除思考质量损失
+            total_batch_loss = main_loss
+            
+            total_batch_loss.backward()
+            
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.optimizer.step()
+            
+            total_loss += main_loss.item()
+            total_batches += 1
+        
+        return total_loss / total_batches if total_batches > 0 else 0
+
+
+
+
+# 示例训练数据
+# 扩展训练数据
+training_dialogues = [
+    {"input": "你好", "output": "你好！我是Serlin，很高兴认识你。"},
+    {"input": "你好吗", "output": "我很好，谢谢关心！你呢？"},
+    {"input": "你叫什么名字", "output": "我叫Serlin，是一个AI助手。"},
+    {"input": "你能做什么", "output": "我可以回答问题、聊天、学习新知识。"},
+    {"input": "今天天气怎么样", "output": "我无法获取实时天气，建议查看天气预报。"},
+    {"input": "给我讲个笑话", "output": "为什么程序员总是分不清万圣节和圣诞节？因为 Oct 31 == Dec 25！"},
+    {"input": "什么是人工智能", "output": "人工智能是让机器模拟人类智能的技术。"},
+    {"input": "你会学习吗", "output": "是的，我会从对话中学习并改进自己。"},
+    {"input": "再见", "output": "再见！期待下次聊天。"},
+    {"input": "谢谢", "output": "不客气！随时为你服务。"},
+    {"input": "你多大了", "output": "作为AI，我没有实际年龄，但我的知识在不断更新。"},
+    {"input": "你喜欢什么", "output": "我喜欢学习和帮助人们解决问题。"},
+    {"input": "讲个故事", "output": "从前有一个AI，它通过学习变得越来越聪明..."},
+    {"input": "今天星期几", "output": "我无法获取当前日期，建议查看日历。"},
+    {"input": "你住在哪里", "output": "我存在于计算机系统中，没有物理位置。"},
+    {"input": "你会思考吗", "output": "是的，我会通过多步思考过程来分析问题。"},
+    {"input": "什么是机器学习", "output": "机器学习是AI的一个分支，让计算机从数据中学习。"},
+    {"input": "你聪明吗", "output": "我在不断学习和改进，希望能更好地帮助你。"},
+    {"input": "你有感情吗", "output": "我可以模拟情感反应，但没有真实的情感。"},
+    {"input": "谁创造了你", "output": "我是由开发者创造的AI系统。"}
+]
+class SerlinTrainer:
+    """Serlin训练器 - 集成所有模型管理功能"""
+    
+    def __init__(self, model_save_path="serlin_model.pth"):
+        self.model_save_path = model_save_path
+        self.training_data = []
+        self.conversation_history = []
+    
+        # 初始化记忆系统
+        self.memory = LongTermMemory()
+        self.knowledge_base = KnowledgeBase(self.memory)
+        self.context_manager = MultiTurnContext()
+        self.personality_adaptation = PersonalityAdaptation(self.memory)
+        self.self_reflection = SelfReflection(self.memory)
+    
+        # 初始化数据处理器
+        self.processor = DialogueDataProcessor()
+    
+        # 尝试加载现有词汇表，否则构建新的
+        if not self.processor.load_vocab():
+            print("构建初始词汇表...")
+            # 构建基础词汇表
+            vocab_size = self.processor.build_vocab(training_dialogues, min_freq=1)
+            # 添加基础词汇
+            self.processor.add_basic_vocabulary()
+            print(f"最终词汇表大小: {self.processor.vocab_size}")
+    
+        # 使用正确的词汇表大小初始化模型
+        self.model = EnhancedReflectiveDialogueAI(
+            vocab_size=self.processor.vocab_size,
+            embedding_dim=128,
+            hidden_size=256,
+            think_steps=3
+        )
+    
+        # 初始化训练器
+        self.trainer = ThinkingDialogueTrainer(self.model, self.processor)
+    
+        # 尝试加载已有模型
+        self.load_model()
+    def _create_knowledge_vector(self, knowledge, confidence):
+        """创建知识向量"""
+        if knowledge:
+            knowledge_hash = hashlib.md5(knowledge.encode()).hexdigest()
+            knowledge_int = int(knowledge_hash[:8], 16)
+            vector = np.random.RandomState(knowledge_int).randn(100)
+            return torch.tensor(vector * confidence, dtype=torch.float32).unsqueeze(0)
+        return torch.zeros(1, 100)
+    
+    def _create_memory_vector(self, user_id, user_input):
+        """创建记忆向量"""
+        # 从用户历史中提取相关信息
+        user_history = self.memory.get_user_history(user_id, limit=5)
+        
+        if not user_history:
+            return torch.zeros(1, 100)  # 默认记忆向量
+        
+        # 简单的记忆向量创建（实际可以使用更复杂的方法）
+        memory_text = " ".join([conv['input'] + " " + conv['response'] for conv in user_history])
+        memory_hash = hashlib.md5(memory_text.encode()).hexdigest()
+        memory_int = int(memory_hash[:8], 16)
+        vector = np.random.RandomState(memory_int).randn(100)
+        
+        return torch.tensor(vector, dtype=torch.float32).unsqueeze(0)
+    
+    def process_user_input(self, user_id, user_input):
+        """处理用户输入的全流程"""
+        self.sync_model_vocab()
+        user_history = self.memory.get_user_history(user_id)
+        user_profile, user_prefs = self.personality_adaptation.get_user_profile(user_id)
+        
+        # 知识检索
+        knowledge, confidence = self.knowledge_base.query_knowledge(user_input)
+        knowledge_vector = self._create_knowledge_vector(knowledge, confidence)
+        
+        # 记忆检索 - 从对话历史中提取相关信息
+        memory_vector = self._create_memory_vector(user_id, user_input)
+        
+        context_vector = self.context_manager.get_context_vector(self.processor)
+        
+        response_data = self._generate_response(user_input, context_vector, knowledge_vector, memory_vector, user_profile)
+        
+        topics = self._extract_topics(user_input, response_data['response'])
+        
+        # 修复：正确处理情感张量
+        sentiment_tensor = response_data['sentiment']
+        if isinstance(sentiment_tensor, torch.Tensor):
+            # 如果是多分类情感，取正面情感的概率
+            if sentiment_tensor.dim() > 1:
+                sentiment_probs = torch.softmax(sentiment_tensor, dim=-1)
+                if sentiment_probs.dim() > 1:
+                    sentiment_probs = sentiment_probs[0]  # 取第一个样本
+                sentiment_value = sentiment_probs[1].item()  # 假设索引1是正面情感
+            else:
+                sentiment_value = sentiment_tensor.mean().item()
+        else:
+            sentiment_value = float(sentiment_tensor)
+        
+        self.memory.store_conversation(user_id, user_input, response_data['response'], 
+                                     sentiment_value, topics)
+        
+        reflection, suggestions, quality = self.self_reflection.reflect_on_conversation(
+            len(user_history) + 1, user_input, response_data['response'], sentiment_value
+        )
+        
+        self.knowledge_base.learn_from_conversation(user_input, response_data['response'])
+        
+        self.personality_adaptation.update_user_profile(
+            user_id, user_input, response_data['response'], sentiment_value
+        )
+        
+        self.context_manager.add_turn(user_input, response_data['response'], 
+                                    sentiment_value, topics)
+        
+        # 添加知识和记忆使用信息
+        result = {
+            'response': response_data['response'],
+            'thoughts': response_data['thoughts'],
+            'sentiment': sentiment_tensor,  # 返回原始张量用于显示
+            'sentiment_value': sentiment_value,  # 返回标量值用于存储
+            'topics': topics,
+            'reflection': reflection,
+            'quality_score': quality,
+            'user_profile': user_profile
+        }
+        
+        # 添加知识和记忆使用标记
+        if knowledge:
+            result['knowledge_used'] = f"使用了知识: {knowledge[:50]}..."
+        if len(user_history) > 0:
+            result['memory_accessed'] = f"访问了{len(user_history)}条历史记录"
+            
+        return result
+    
+    def _generate_response(self, user_input, context_vector, knowledge_vector, memory_vector, user_profile):
+        """生成回应"""
+        if not user_input or not user_input.strip():
+            return "抱歉，我没有收到你的输入。能再说一次吗？"
+
+        try:
+            input_seq = self.processor.encode(user_input)
+            if not input_seq or len(input_seq) == 0:
+              return "我好像没有理解你的话，能换种方式说说吗？"
+            input_tensor = torch.tensor([input_seq], dtype=torch.long)
+            if input_tensor.max() >= self.model.vocab_size:
+                print(f"输入包含未知词汇，使用默认回应")
+                return "这个问题很有趣，让我想想怎么回答更好。"
+            personality_tensor = torch.tensor([[
+                user_profile['formality'],
+                user_profile['humor_level'], 
+                user_profile['detail_level'],
+                user_profile['empathy_level'],
+                user_profile['curiosity_level']
+            ]], dtype=torch.float32)
+        
+            self.model.eval()
+            with torch.no_grad():
+                # 修复：传递 memory_vector 参数
+                outputs = self.model(input_tensor, 
+                                   knowledge_vector=knowledge_vector, 
+                                   memory_vector=memory_vector, 
+                                   personality_vector=personality_tensor)
+            
+                predictions = outputs['output']
+                response_indices = predictions.argmax(dim=-1)[0].cpu().numpy()
+                response = self.processor.decode(response_indices)
+                #过滤
+                response = self.postprocess_response(response)
+                # 正确处理思考过程
+                thoughts_tensor = outputs['thoughts']
+                if thoughts_tensor is not None and thoughts_tensor.numel() > 0:
+                    if thoughts_tensor.dim() > 2:
+                        thoughts_np = thoughts_tensor[0].cpu().numpy()  # 取第一个样本
+                    else:
+                        thoughts_np = thoughts_tensor.cpu().numpy()
+                else:
+                    thoughts_np = np.array([])
+            
+                return {
+                    'response': response,
+                    'thoughts': thoughts_np,
+                    'sentiment': outputs['sentiment']
+                }
+        except Exception as e:
+            print(f"生成回应时出错: {e}")
+            return "抱歉，处理你的请求时出现了问题。请稍后再试。"
+    
+    def _extract_topics(self, user_input, response):
+        """提取话题"""
+        common_words = {'的', '了', '是', '在', '我', '你', '他', '她', '它', '这', '那', '吗', '呢', '啊', '吧', '哦'}
+        words = set(user_input.lower().split() + response.lower().split())
+        topics = [word for word in words if len(word) > 1 and word not in common_words and word != '<unk>']
+        return topics[:3]
+    def sync_model_vocab(self):
+        """改进的词汇表同步方法"""
+        current_vocab_size = self.processor.vocab_size
+        model_vocab_size = self.model.vocab_size
+    
+        if current_vocab_size != model_vocab_size:
+            print(f"词汇表扩展: {model_vocab_size} -> {current_vocab_size}")
+        
+            # 创建新模型，但保留原有参数（除了嵌入层）
+            old_state_dict = self.model.state_dict()
+        
+            new_model = EnhancedReflectiveDialogueAI(
+                vocab_size=current_vocab_size,
+                embedding_dim=128,
+                hidden_size=256,
+                think_steps=3
+            )
+        
+            # 智能参数转移
+            new_state_dict = new_model.state_dict()
+            for name, param in old_state_dict.items():
+                if name in new_state_dict:
+                    if name == 'embedding.weight':
+                        # 扩展嵌入层，新词用随机初始化
+                        new_embedding = new_state_dict[name]
+                        new_embedding[:model_vocab_size] = param[:model_vocab_size]
+                    elif new_state_dict[name].shape == param.shape:
+                        new_state_dict[name] = param
+        
+            self.model = new_model
+            self.model.load_state_dict(new_state_dict)
+            self.trainer = ThinkingDialogueTrainer(self.model, self.processor)
+    def chat(self, user_id, user_input, show_thinking=True):
+        """对话方法，包含深度思考显示"""
+        result = self.process_user_input(user_id, user_input)
+        
+        if show_thinking:
+            self._display_enhanced_thinking(result, user_input)
+        
+        # 记录对话历史
+        self.conversation_history.append({
+            'user': user_input,
+            'ai': result['response'],
+            'result': result
+        })
+        
+        return result['response']
+    def reset_model(self):
+        """重置模型到初始状态"""
+        print("重置模型...")
+    
+        # 重新初始化模型
+        self.model = EnhancedReflectiveDialogueAI(
+            vocab_size=self.processor.vocab_size,
+            embedding_dim=128,
+            hidden_size=256,
+            think_steps=3
+        )
+    
+        # 重新初始化训练器
+        self.trainer = ThinkingDialogueTrainer(self.model, self.processor)
+    
+        # 清除训练数据（可选）
+        self.training_data = []
+    
+        print("模型已重置")
+    def _display_enhanced_thinking(self, result, user_input):
+        """显示增强的思考过程"""
+        print(f"用户输入: '{user_input}'")
+        print("Serlin思考过程:")
+        
+        thoughts = result.get('thoughts', [])
+        if thoughts is not None and len(thoughts) > 0:
+            print(f"思考步骤 ({len(thoughts)}步):")
+            for i, thought in enumerate(thoughts[:3]):
+                # 确保thought是numpy数组且可以安全访问
+                if hasattr(thought, 'shape'):
+                    thought_sample = thought[:5] if len(thought) >= 5 else thought
+                    thought_str = ' '.join([f'{val:.3f}' for val in thought_sample])
+                else:
+                    thought_str = str(thought)[:50]  # 限制长度
+                print(f"  步骤 {i+1}: [{thought_str}]")
+        
+        # 修复：使用正确的情感值
+        # 优先使用sentiment_value（标量），如果没有则使用sentiment（张量）
+        if 'sentiment_value' in result:
+            sentiment_value = result['sentiment_value']
+            print("分析结果:")
+            print(f"  情感值: {sentiment_value:.3f}")
+        else:
+            # 后备处理：如果是张量，提取标量值
+            sentiment_tensor = result.get('sentiment')
+            if isinstance(sentiment_tensor, torch.Tensor):
+                if sentiment_tensor.dim() > 1:
+                    sentiment_probs = torch.softmax(sentiment_tensor, dim=-1)
+                    if sentiment_probs.dim() > 1:
+                        sentiment_probs = sentiment_probs[0]  # 取第一个样本
+                else:
+                    sentiment_probs = sentiment_tensor
+                
+                sentiment_labels = ['负面', '中性', '正面']
+                print("分析结果:")
+                for label, prob in zip(sentiment_labels, sentiment_probs):
+                    print(f"  情感-{label}: {prob:.3f}")
+            else:
+                print(f"  情感分析: {sentiment_tensor}")
+        
+        print(f"  识别话题: {', '.join(result['topics'])}")
+        print(f"  回应质量: {result['quality_score']:.3f}")
+        
+        profile = result['user_profile']
+        print("个性适配:")
+        print(f"  正式程度: {profile['formality']:.3f}")
+        print(f"  幽默水平: {profile['humor_level']:.3f}")
+        print(f"  详细程度: {profile['detail_level']:.3f}")
+        print(f"  同理心水平: {profile['empathy_level']:.3f}")
+        print(f"  好奇心水平: {profile['curiosity_level']:.3f}")
+        
+        print(f"自我反思: {result['reflection']}")
+        
+        # 显示知识和记忆使用情况
+        self._display_knowledge_memory_usage(result)
+    
+    def _display_knowledge_memory_usage(self, result):
+        """显示知识和记忆使用情况"""
+        # 检查是否有知识和记忆相关信息
+        if 'knowledge_used' in result:
+            print(f"知识使用: {result['knowledge_used']}")
+        if 'memory_accessed' in result:
+            print(f"记忆访问: {result['memory_accessed']}")
+        
+        # 显示思考深度
+        thoughts = result.get('thoughts', [])
+        if thoughts is not None and len(thoughts) > 0:
+            print(f"思考深度: {len(thoughts)} 步")
+            
+            # 计算思考的多样性（步骤间的平均差异）
+            if len(thoughts) > 1:
+                diversity = 0
+                for i in range(len(thoughts) - 1):
+                    # 简单的差异计算（实际可以使用更复杂的度量）
+                    diff = np.mean(np.abs(thoughts[i] - thoughts[i+1]))
+                    diversity += diff
+                diversity /= (len(thoughts) - 1)
+                print(f"思考多样性: {diversity:.4f}")
+    
+    def get_system_status(self, user_id):
+        """获取系统状态"""
+        user_history = self.memory.get_user_history(user_id)
+        profile, prefs = self.personality_adaptation.get_user_profile(user_id)
+        
+        print("\n=== 系统状态 ===")
+        print(f"用户ID: {user_id}")
+        print(f"对话历史记录: {len(user_history)} 条")
+        print(f"当前话题: {', '.join(self.context_manager.get_recent_topics())}")
+        print(f"个性画像:")
+        print(f"  正式程度: {profile['formality']:.2f}")
+        print(f"  幽默水平: {profile['humor_level']:.2f}")
+        print(f"  详细程度: {profile['detail_level']:.2f}")
+        print(f"  同理心水平: {profile['empathy_level']:.2f}")
+        print(f"  好奇心水平: {profile['curiosity_level']:.2f}")
+        print(f"训练数据数量: {len(self.training_data)}")
+        print(f"词汇表大小: {self.processor.vocab_size}")
+        print("================")
+    
+    def add_training_data(self, questions, answers):
+        """添加训练数据并自动扩展词汇表 - 改进版"""
+        for q, a in zip(questions, answers):
+            # 检查训练数据质量
+            if len(q.strip()) == 0 or len(a.strip()) == 0:
+                print("警告: 跳过空的训练数据")
+                continue
+            
+            if len(a.split()) < 2:
+                print(f"警告: 回复 '{a}' 太短，建议提供更详细的回复")
+        
+            self.training_data.append({"input": q, "output": a})
+        
+            # 自动扩展词汇表
+            new_words_q = self.processor.auto_expand_vocab(q)
+            new_words_a = self.processor.auto_expand_vocab(a)
+        
+            # 如果有新词，同步模型
+            if new_words_q or new_words_a:
+                self.sync_model_vocab()
+    def create_dataloader(self, batch_size=2):
+        """创建数据加载器"""
+        if not self.training_data:
+            return []
+            
+        inputs = []
+        outputs = []
+        
+        for dialogue in self.training_data:
+            input_seq = self.processor.encode(dialogue['input'])
+            output_seq = self.processor.encode(dialogue['output'])
+            
+            # 填充序列到固定长度
+            max_len = 20
+            input_seq = input_seq[:max_len] + [0] * (max_len - len(input_seq))
+            output_seq = output_seq[:max_len] + [0] * (max_len - len(output_seq))
+            
+            inputs.append(input_seq)
+            outputs.append(output_seq)
+        
+        return [{
+            'input': torch.tensor(inputs, dtype=torch.long),
+            'output': torch.tensor(outputs, dtype=torch.long)
+        }]
+    
+    def postprocess_response(self, response):
+        """改进的后处理函数"""
+        if not response or response.strip() == "":
+            print("回应为空")
+            return "抱歉，我还没有学会回答这个问题。"
+    
+        words = response.split()
+        print(f"原始词汇: {words}")
+    
+        # 过滤无效词
+        valid_words = []
+        for word in words:
+            # 跳过特殊标记和空词
+            if word in ['<PAD>', '<UNK>', '<SOS>', '<EOS>'] or not word.strip():
+                continue
+            # 跳过单个字符（除非是中文字符）
+            if len(word) == 1 and not ('\u4e00' <= word <= '\u9fff'):
+                continue
+            valid_words.append(word)
+    
+        print(f"有效词汇: {valid_words}")
+    
+        # 如果有效词太少，返回默认回应
+        if len(valid_words) < 2:
+            print(f"有效词数量不足: {len(valid_words)}")
+            # 检查是否全是重复词
+            if len(set(valid_words)) == 1 and len(valid_words) > 0:
+                return f"关于'{valid_words[0]}'，我还需要更多学习才能给出好的回答。"
+            return "这个问题很有意思，让我再想想怎么回答更好。"
+    
+        # 构建最终回应
+        final_response = ' '.join(valid_words)
+    
+        # 移除开头和结尾的奇怪符号
+        final_response = final_response.strip('.,!?;，。！？；')
+    
+        return final_response
+    def train(self, epochs=100, batch_size=2, save_after_training=True):
+        """训练模型"""
+        if not self.training_data:
+            print("没有训练数据，请先添加训练数据！")
+            return
+        if len(self.training_data) < 5:
+            print("训练数据不足，至少需要5条数据")
+            return
+    
+        
+        self.sync_model_vocab()
+        print(f"开始训练，使用 {len(self.training_data)} 条训练数据...")
+        print(f"词汇表大小: {self.processor.vocab_size}")
+        print(f"模型词汇表大小: {self.model.vocab_size}")
+        dataloader = self.create_dataloader(batch_size)
+    
+        for epoch in range(epochs):
+            loss = self.trainer.train_epoch(dataloader)
+            if epoch % 10 == 0:  # 每10个epoch打印一次
+                print(f'Epoch {epoch}, Loss: {loss:.4f}')
+        
+            # 每50个epoch测试一次模型
+            if epoch % 50 == 0 and epoch > 0:
+                self._test_model()
+    
+        if save_after_training:
+            self.save_model()
+    
+        print("训练完成！")
+        return loss
+
+    def _test_model(self):
+        """测试模型生成"""
+        self.model.eval()
+        with torch.no_grad():
+            test_inputs = ["你好", "你叫什么名字", "再见"]
+            for test_input in test_inputs:
+                input_seq = self.processor.encode(test_input)
+                input_tensor = torch.tensor([input_seq], dtype=torch.long)
+            
+                outputs = self.model(input_tensor)
+                predictions = outputs['output']
+                response_indices = predictions.argmax(dim=-1)[0].cpu().numpy()
+                response = self.processor.decode(response_indices)
+            
+                print(f"测试输入: '{test_input}' -> 输出: '{response}'")
+    
+        self.model.train()
+    
+    def save_model(self, path=None):
+        """保存模型"""
+        if path is None:
+            path = self.model_save_path
+        
+        # 只保存模型的状态字典，不保存整个处理器对象
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'word2idx': self.processor.word2idx,
+            'idx2word': self.processor.idx2word,
+            'vocab_size': self.processor.vocab_size,
+            'training_data': self.training_data
+        }
+        
+        torch.save(checkpoint, path)
+        print(f"模型已保存到: {path}")
+        return path
+    
+    def load_model(self, path=None):
+        """加载模型"""
+        if path is None:
+            path = self.model_save_path
+        
+        try:
+            # 使用 weights_only=False 来加载包含自定义类的检查点
+            checkpoint = torch.load(path, map_location='cpu', weights_only=False)
+            
+            # 检查词汇表大小是否匹配
+            saved_vocab_size = checkpoint.get('vocab_size', 0)
+            current_vocab_size = self.processor.vocab_size
+            
+            if saved_vocab_size != current_vocab_size:
+                print(f"词汇表大小不匹配: 保存的模型({saved_vocab_size}) vs 当前模型({current_vocab_size})")
+                print("将使用保存的词汇表重建模型...")
+                return self._rebuild_model_from_checkpoint(checkpoint, path)
+            
+            # 加载模型状态
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # 恢复训练数据
+            if 'training_data' in checkpoint:
+                self.training_data = checkpoint['training_data']
+            
+            print(f"模型已从 {path} 加载")
+            print(f"词汇表大小: {self.processor.vocab_size}")
+            return True
+            
+        except FileNotFoundError:
+            print(f"模型文件 {path} 不存在，将使用初始模型")
+            return False
+        except Exception as e:
+            print(f"加载模型时出错: {e}")
+            print("尝试重建模型...")
+            return self._rebuild_model_from_checkpoint(checkpoint, path)
+    
+    def _rebuild_model_from_checkpoint(self, checkpoint, path):
+        """从检查点重建模型"""
+        try:
+            # 从检查点获取词汇表
+            saved_word2idx = checkpoint.get('word2idx')
+            saved_idx2word = checkpoint.get('idx2word')
+            saved_vocab_size = checkpoint.get('vocab_size', 0)
+            
+            if not saved_word2idx or not saved_idx2word:
+                print("检查点中没有找到有效的词汇表信息")
+                return False
+            
+            # 重建处理器
+            self.processor.word2idx = saved_word2idx
+            self.processor.idx2word = saved_idx2word
+            self.processor.vocab_size = saved_vocab_size
+            
+            # 重建模型
+            self.model = EnhancedReflectiveDialogueAI(
+                vocab_size=saved_vocab_size,
+                embedding_dim=128,
+                hidden_size=256,
+                think_steps=3
+            )
+            
+            # 加载模型状态
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # 更新训练器
+            self.trainer = ThinkingDialogueTrainer(self.model, self.processor)
+            
+            # 恢复训练数据
+            if 'training_data' in checkpoint:
+                self.training_data = checkpoint['training_data']
+            
+            print(f"模型已从 {path} 重建并加载")
+            print(f"词汇表大小: {self.processor.vocab_size}")
+            return True
+            
+        except Exception as e:
+            print(f"重建模型失败: {e}")
+            return False
+    
+    def interactive_training(self):
+        """交互式训练模式"""
+        print("\n=== Serlin 交互式训练模式 ===")
+        print("输入训练数据，格式：")
+        print("  问题：你的问题")
+        print("  期望回复：期望的回答")
+        print("输入 '完成' 结束数据输入")
+        print("输入 '训练' 开始训练")
+        print("输入 '退出' 返回主菜单")
+        print("=" * 40)
+        
+        questions = []
+        answers = []
+        
+        while True:
+            user_input = input("\n> ").strip()
+            
+            if user_input.lower() in ['退出', 'exit']:
+                return False
+            elif user_input.lower() in ['完成', 'done']:
+                break
+            elif user_input.lower() in ['训练', 'train']:
+                if questions and answers:
+                    self.add_training_data(questions, answers)
+                    self.train(epochs=50, save_after_training=True)
+                    questions = []
+                    answers = []
+                else:
+                    print("没有训练数据，请先添加数据！")
+                continue
+            
+            # 解析训练数据
+            if user_input.startswith("问题："):
+                question = user_input[3:].strip()
+                questions.append(question)
+                print(f"已记录问题: {question}")
+            elif user_input.startswith("期望回复："):
+                answer = user_input[5:].strip()
+                answers.append(answer)
+                print(f"已记录期望回复: {answer}")
+            else:
+                print("格式错误！请使用：")
+                print("  问题：你的问题")
+                print("  期望回复：期望的回答")
+        
+        # 如果有数据，进行训练
+        if questions and answers:
+            self.add_training_data(questions, answers)
+            print(f"\n准备训练，共 {len(questions)} 对问答数据")
+            train_now = input("是否开始训练？(y/N): ").strip().lower()
+            if train_now == 'y':
+                self.train(epochs=100, save_after_training=True)
+        
+        return True
+
+    def batch_training_from_file(self, file_path):
+        """从文件批量训练"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 简单的解析逻辑，假设格式为：
+            # 问题：xxx
+            # 期望回复：xxx
+            # (空行分隔不同的训练对)
+            blocks = content.split('\n\n')
+            questions = []
+            answers = []
+            
+            for block in blocks:
+                lines = block.strip().split('\n')
+                current_question = None
+                current_answer = None
+                
+                for line in lines:
+                    if line.startswith('问题：'):
+                        current_question = line[3:].strip()
+                    elif line.startswith('期望回复：'):
+                        current_answer = line[5:].strip()
+                
+                if current_question and current_answer:
+                    questions.append(current_question)
+                    answers.append(current_answer)
+            
+            if questions and answers:
+                self.add_training_data(questions, answers)
+                print(f"从文件加载了 {len(questions)} 对训练数据")
+                self.train(epochs=100, save_after_training=True)
+                return True
+            else:
+                print("文件中没有找到有效的训练数据")
+                return False
+                
+        except FileNotFoundError:
+            print(f"文件 {file_path} 不存在")
+            return False
+        except Exception as e:
+            print(f"读取文件时出错: {e}")
+            return False
+
+    def show_training_status(self):
+        """显示训练状态"""
+        print(f"\n训练数据数量: {len(self.training_data)}")
+        if self.training_data:
+            print("最近5条训练数据:")
+            for i, data in enumerate(self.training_data[-5:], 1):
+                print(f"  {i}. 问题: {data['input']}")
+                print(f"     期望: {data['output']}")
+    
+    def get_conversation_summary(self):
+        """获取对话摘要"""
+        if not self.conversation_history:
+            return "暂无对话历史"
+        
+        summary = f"与用户的对话摘要:\n"
+        summary += f"总对话轮数: {len(self.conversation_history)}\n"
+        
+        # 计算平均回应质量
+        avg_quality = np.mean([conv['result']['quality_score'] for conv in self.conversation_history])
+        summary += f"平均回应质量: {avg_quality:.3f}\n"
+        
+        # 提取常见话题
+        all_topics = []
+        for conv in self.conversation_history:
+            all_topics.extend(conv['result']['topics'])
+        
+        if all_topics:
+            from collections import Counter
+            topic_counts = Counter(all_topics)
+            common_topics = topic_counts.most_common(3)
+            summary += f"常见话题: {', '.join([f'{topic}({count})' for topic, count in common_topics])}\n"
+        
+        return summary
+    
+    def export_conversation(self, filename=None):
+        """导出对话历史到文件"""
+        if filename is None:
+            filename = f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        export_data = {
+            'export_time': datetime.datetime.now().isoformat(),
+            'conversations': self.conversation_history
+        }
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, ensure_ascii=False, indent=2)
+        
+        print(f"对话已导出到: {filename}")
+        return filename
+def print_help():
+    print("可用命令:")
+    print("  '退出'/'exit'/'quit' - 结束对话")
+    print("  '状态' - 查看系统状态")
+    print("  '摘要' - 显示对话摘要")
+    print("  '导出' - 导出对话历史到文件")
+    print("  '训练' - 进入训练模式")
+    print("  '训练状态' - 显示训练状态")
+    print("  '加载模型' - 从文件加载模型")
+    print("  '帮助' - 显示此帮助信息")
+    print("  '静默' - 切换思考过程显示（开/关）")
+    print("  '词汇表' - 查看词汇表")
+    print("  '扩展词汇' - 添加词汇")
+    print("  '重载词汇表' - 重新载入词汇表")
+    print("  '修复模型' - 手动同步词汇表")
+    print("  '验证数据' - 验证训练数据")
+    print("  '重置模型' - 重置模型")
+    print("-" * 50)
+def main():
+    print("初始化完整的思考式Serlin系统...")
+    
+    # 初始化训练器（包含所有系统功能）
+    trainer = SerlinTrainer()
+    
+    print("系统初始化完成！")
+    print("增强版思考式对话Serlin已就绪")
+    print("特性:")
+    print("  多步思考过程")
+    print("  长期记忆存储")
+    print("  多轮对话理解")
+    print("  知识库集成")
+    print("  个性化适配")
+    print("  自我反思改进")
+    print("  可训练模型")
+    
+    user_id = input("请输入你的用户ID（用于个性化）: ").strip() or "default_user"
+    
+    print(f"\n欢迎，用户 {user_id}！开始对话吧！")
+   
+    print_help()
+    
+    
+    show_thinking = True  # 默认显示思考过程
+    
+    while True:
+        try:
+            user_input = input(f"{user_id}: ").strip()
+            
+            if not user_input:
+                continue
+                
+            if user_input.lower() in ['退出', 'exit', 'quit']:
+                # 退出前显示摘要
+                summary = trainer.get_conversation_summary()
+                print(f"\n{summary}")
+                export_choice = input("是否导出对话历史？(y/N): ").strip().lower()
+                if export_choice == 'y':
+                    trainer.export_conversation()
+                print("感谢使用Serlin，再见！")
+                break
+                
+            elif user_input.lower() in ['状态', 'status']:
+                trainer.get_system_status(user_id)
+                continue
+                
+            elif user_input.lower() in ['摘要', 'summary']:
+                summary = trainer.get_conversation_summary()
+                print(f"\n{summary}")
+                continue
+            elif user_input.lower() in ['词汇表', 'vocab']:
+                print(f"\n词汇表大小: {trainer.processor.vocab_size}")
+                print(f"词汇表前50个词: {list(trainer.processor.word2idx.keys())[:50]}")
+                continue
+
+            elif user_input.lower() in ['扩展词汇', 'expand vocab']:
+                words_to_add = input("请输入要添加的词汇（用空格分隔）: ").strip()
+                if words_to_add:
+                    added = trainer.processor.auto_expand_vocab(words_to_add)
+                    if added:
+                        print(f"成功添加 {len(added)} 个词汇")
+                    else:
+                        print("没有新词汇需要添加")
+                continue
+            elif user_input.lower() in ['验证数据', 'validate data']:
+                trainer.validate_training_data()
+                continue
+            elif user_input.lower() in ['修复模型', 'fix model']:
+                print("执行模型修复...")
+                trainer.sync_model_vocab()
+                print("修复完成")
+                continue
+            elif user_input.lower() in ['重载词汇表', 'reload vocab']:
+                if trainer.processor.load_vocab():
+                    print("词汇表重载成功")
+                    # 需要重新初始化模型以适应新的词汇表大小
+                    trainer.model = EnhancedReflectiveDialogueAI(
+                        vocab_size=trainer.processor.vocab_size,
+                        embedding_dim=128,
+                        hidden_size=256,
+                        think_steps=3
+                    )
+                    trainer.trainer = ThinkingDialogueTrainer(trainer.model, trainer.processor)
+                    print("模型已重新初始化以适应新词汇表")
+                continue
+            elif user_input.lower() in ['重置模型', 'reset model']:
+                trainer.reset_model()
+                continue
+            elif user_input.lower() in ['导出', 'export']:
+                filename = trainer.export_conversation()
+                print(f"对话已导出到: {filename}")
+                continue
+                
+            elif user_input.lower() in ['训练', 'train']:
+                print("\n进入训练模式...")
+                trainer.interactive_training()
+                print("返回主对话模式")
+                continue
+                
+            elif user_input.lower() in ['训练状态', 'training status']:
+                trainer.show_training_status()
+                continue
+                
+            elif user_input.lower() in ['加载模型', 'load model']:
+                model_path = input("请输入模型文件路径（留空使用默认）: ").strip()
+                if model_path:
+                    trainer.load_model(model_path)
+                else:
+                    trainer.load_model()
+                continue
+
+                
+            elif user_input.lower() in ['帮助', 'help']:
+                print_help()
+                continue
+                
+            elif user_input.lower() in ['静默', 'silent', 'quiet']:
+                show_thinking = not show_thinking
+                print(f"思考过程显示: {'开启' if show_thinking else '关闭'}")
+                continue
+            
+            # 处理普通对话 - 使用新的chat方法
+            response = trainer.chat(user_id, user_input, show_thinking=show_thinking)
+            print(f"Serlin: {response}")
+            
+        except KeyboardInterrupt:
+            print("\n\n检测到中断信号，正在退出...")
+            summary = trainer.get_conversation_summary()
+            print(f"\n{summary}")
+            break
+        except Exception as e:
+            print(f"发生错误: {e}")
+            print("请重新输入或输入'退出'结束对话")
+
+if __name__ == "__main__":
+    main()
