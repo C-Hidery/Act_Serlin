@@ -1858,21 +1858,47 @@ class SerlinTransformer:
         
         return summary
 
+    def _convert_tensors_to_serializable(self, obj):
+        """将Tensor对象转换为可JSON序列化的格式"""
+        if isinstance(obj, torch.Tensor):
+            # 如果是单个值的Tensor，转换为float
+            if obj.numel() == 1:
+                return obj.item()
+            # 如果是向量，转换为列表
+            else:
+                return obj.cpu().numpy().tolist()
+        elif isinstance(obj, dict):
+            return {key: self._convert_tensors_to_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_tensors_to_serializable(item) for item in obj]
+        elif isinstance(obj, (int, float, str, bool, type(None))):
+            return obj
+        else:
+            # 对于其他无法序列化的类型，转换为字符串
+            return str(obj)
+
     def export_conversation(self, filename=None):
-        """导出对话历史到文件"""
+        """修复的导出对话历史方法"""
         if filename is None:
             filename = f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        
+    
+        # 转换对话历史中的Tensor对象
+        serializable_history = self._convert_tensors_to_serializable(self.conversation_history)
+    
         export_data = {
             'export_time': datetime.datetime.now().isoformat(),
-            'conversations': self.conversation_history
+            'conversations': serializable_history
         }
+    
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
         
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2)
-        
-        print(f"对话已导出到: {filename}")
-        return filename
+            print(f"对话已导出到: {filename}")
+            return filename
+        except Exception as e:
+            print(f"导出失败: {e}")
+            return None
 
     def reset_model(self):
         """重置模型到初始状态"""
