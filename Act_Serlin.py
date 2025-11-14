@@ -490,9 +490,9 @@ class TransformerThinkingLayer(nn.Module):
 class TransformerDialogueAI(nn.Module):
     """基于Transformer的对话AI - 修复batch_first警告"""
     
-    def __init__(self, vocab_size, idx2word, d_model=512, nhead=8, 
-                 num_encoder_layers=6, num_decoder_layers=6,
-                 think_steps=3, max_length=100, dropout=0.1):
+    def __init__(self, vocab_size, idx2word, d_model=256, nhead=8, 
+                 num_encoder_layers=4, num_decoder_layers=4,
+                 think_steps=2, max_length=100, dropout=0.1):
         super(TransformerDialogueAI, self).__init__()
         
         self.vocab_size = vocab_size
