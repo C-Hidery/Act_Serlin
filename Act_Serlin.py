@@ -11,7 +11,23 @@ import hashlib
 from collections import defaultdict, deque, OrderedDict
 import datetime
 import math
-
+class SerlinConfig:
+    def __init__(
+        self,
+        d_model=512,
+        nhead=8,
+        num_encoder_layers=6,
+        num_decoder_layers=6,
+        think_steps=3,
+        max_length=50
+    ):
+        self.d_model = d_model
+        self.nhead = nhead
+        self.num_encoder_layers = num_encoder_layers
+        self.num_decoder_layers = num_decoder_layers
+        self.think_steps = think_steps
+        self.max_length = max_length
+serlin_config = SerlinConfig()
 class LongTermMemory:
     """长期记忆系统"""
     
@@ -251,8 +267,8 @@ class MultiTurnContext:
         # 更新当前话题
         self.current_topics.update(extracted_topics)
         # 限制话题数量
-        if len(self.current_topics) > 8:
-            self.current_topics = set(list(self.current_topics)[-8:])
+        if len(self.current_topics) > serlin_config.nhead:
+            self.current_topics = set(list(self.current_topics)[-serlin_config.nhead:])
     
     def get_context_text(self):
         """获取上下文文本"""
@@ -260,7 +276,7 @@ class MultiTurnContext:
             return ""
         
         context_texts = []
-        for turn in list(self.conversation_context)[-3:]:
+        for turn in list(self.conversation_context)[-serlin_config.think_steps:]:
             context_texts.extend([turn['user_input'], turn['ai_response']])
         
         return " ".join(context_texts)
@@ -349,7 +365,7 @@ class SelfReflection:
         quality_score = 0.5  # 基础分
         
         # 基于长度评估
-        if len(ai_response.split()) >= 5 and len(ai_response.split()) <= 50:
+        if len(ai_response.split()) >= 5 and len(ai_response.split()) <= serlin_config.max_length:
             quality_score += 0.2
         
         # 处理情感值
@@ -427,7 +443,7 @@ class PositionalEncoding(nn.Module):
 class TransformerThinkingLayer(nn.Module):
     """Transformer思考层 - 适配batch_first"""
     
-    def __init__(self, d_model, nhead, num_layers, think_steps=3):
+    def __init__(self, d_model, nhead, num_layers, think_steps=serlin_config.think_steps):
         super(TransformerThinkingLayer, self).__init__()
         self.d_model = d_model
         self.think_steps = think_steps
@@ -490,9 +506,9 @@ class TransformerThinkingLayer(nn.Module):
 class TransformerDialogueAI(nn.Module):
     """基于Transformer的对话AI - 修复batch_first警告"""
     
-    def __init__(self, vocab_size, idx2word, d_model=256, nhead=8, 
-                 num_encoder_layers=4, num_decoder_layers=4,
-                 think_steps=2, max_length=100, dropout=0.1):
+    def __init__(self, vocab_size, idx2word, d_model=512, nhead=serlin_config.nhead, 
+                 num_encoder_layers=6, num_decoder_layers=6,
+                 think_steps=3, max_length=100, dropout=0.1):
         super(TransformerDialogueAI, self).__init__()
         
         self.vocab_size = vocab_size
@@ -767,9 +783,9 @@ class DialogueDataProcessor:
         
             if word not in self.word2idx:
                 # 检查词汇表是否达到上限（可选）
-                if self.vocab_size >= 15000:
-                    print(f"警告: 词汇表已达到上限 {self.vocab_size}，跳过添加新词")
-                    continue
+                #if self.vocab_size >= 15000:
+                #   print(f"警告: 词汇表已达到上限 {self.vocab_size}，跳过添加新词")
+                #   continue
             
                 # 添加新词到词汇表
                 self.word2idx[word] = self.vocab_size
@@ -1017,7 +1033,7 @@ training_dialogues = [
 class SerlinTransformer:
     """基于Transformer的Serlin系统 - 增强版"""
     
-    def __init__(self, model_save_path="serlin_transformer.pth"):
+    def __init__(self, d_model,nhead,num_encoder_layers,num_decoder_layers,think_steps,max_length,model_save_path="serlin_transformer.pth"):
         self.model_save_path = model_save_path
         self.training_data = []
         self.conversation_history = []
@@ -1045,13 +1061,13 @@ class SerlinTransformer:
         # 使用Transformer模型
         self.model = TransformerDialogueAI(
             vocab_size=self.processor.vocab_size,
-            d_model=256,
+            d_model=d_model,
             idx2word=self.processor.idx2word,
-            nhead=8,
-            num_encoder_layers=4,
-            num_decoder_layers=4,
-            think_steps=3,
-            max_length=50
+            nhead=nhead,
+            num_encoder_layers=num_encoder_layers,
+            num_decoder_layers=num_decoder_layers,
+            think_steps=think_steps,
+            max_length=max_length
         )
     
         # 初始化训练器
@@ -1064,22 +1080,22 @@ class SerlinTransformer:
         """创建知识向量"""
         if knowledge:
             knowledge_hash = hashlib.md5(knowledge.encode()).hexdigest()
-            knowledge_int = int(knowledge_hash[:8], 16)
-            vector = np.random.RandomState(knowledge_int).randn(256)
+            knowledge_int = int(knowledge_hash[:serlin_config.nhead], 16)
+            vector = np.random.RandomState(knowledge_int).randn(serlin_config.d_model)
             return torch.tensor(vector * confidence, dtype=torch.float32).unsqueeze(0)
-        return torch.zeros(1, 256)
+        return torch.zeros(1, serlin_config.d_model)
     
     def _create_memory_vector(self, user_id, user_input):
         """创建记忆向量"""
         user_history = self.memory.get_user_history(user_id, limit=5)
         
         if not user_history:
-            return torch.zeros(1, 256)
+            return torch.zeros(1, serlin_config.d_model)
         
         memory_text = " ".join([conv['input'] + " " + conv['response'] for conv in user_history])
         memory_hash = hashlib.md5(memory_text.encode()).hexdigest()
-        memory_int = int(memory_hash[:8], 16)
-        vector = np.random.RandomState(memory_int).randn(256)
+        memory_int = int(memory_hash[:serlin_config.nhead], 16)
+        vector = np.random.RandomState(memory_int).randn(serlin_config.d_model)
         
         return torch.tensor(vector, dtype=torch.float32).unsqueeze(0)
     
@@ -1140,7 +1156,7 @@ class SerlinTransformer:
         }
         
         if knowledge:
-            result['knowledge_used'] = f"使用了知识: {knowledge[:50]}..."
+            result['knowledge_used'] = f"使用了知识: {knowledge[:serlin_config.max_length]}..."
         if len(user_history) > 0:
             result['memory_accessed'] = f"访问了{len(user_history)}条历史记录"
             
@@ -1255,7 +1271,7 @@ class SerlinTransformer:
         common_words = {'的', '了', '是', '在', '我', '你', '他', '她', '它', '这', '那', '吗', '呢', '啊', '吧', '哦'}
         words = set(user_input.lower().split() + response.lower().split())
         topics = [word for word in words if len(word) > 1 and word not in common_words and word != '<unk>']
-        return topics[:3]
+        return topics[:serlin_config.think_steps]
     
     def sync_model_vocab(self):
         """修复的词汇表同步方法 - 确保嵌入层正确扩展"""
@@ -1277,12 +1293,12 @@ class SerlinTransformer:
             self.model = TransformerDialogueAI(
                 vocab_size=current_vocab_size,
                 idx2word=self.processor.idx2word,
-                d_model=256,
+                d_model=512,
                 nhead=8,
-                num_encoder_layers=4,
-                num_decoder_layers=4,
+                num_encoder_layers=6,
+                num_decoder_layers=6,
                 think_steps=3,
-                max_length=50
+                max_length=100
             )
     
             # 尝试恢复参数
@@ -1464,7 +1480,7 @@ class SerlinTransformer:
             return None
     
         best_loss = float('inf')
-        patience = 8
+        patience = serlin_config.nhead
         patience_counter = 0
     
         train_losses = []
@@ -1687,7 +1703,7 @@ class SerlinTransformer:
             
                 # 解析训练数据
                 if user_input.startswith("问题："):
-                    question = user_input[3:].strip()
+                    question = user_input[serlin_config.think_steps:].strip()
                     questions.append(question)
                     print(f"已记录问题: {question}")
                 elif user_input.startswith("期望回复："):
@@ -1808,7 +1824,7 @@ class SerlinTransformer:
         print("3. 创建训练模板 - 生成JSON模板文件")
         print("4. 返回主菜单")
         
-        choice = input("请选择训练方式 (1-5): ").strip()
+        choice = input("请选择训练方式 (1-4): ").strip()
         
         if choice == '1':
             self.interactive_training_with_options()
@@ -1853,7 +1869,7 @@ class SerlinTransformer:
         if all_topics:
             from collections import Counter
             topic_counts = Counter(all_topics)
-            common_topics = topic_counts.most_common(3)
+            common_topics = topic_counts.most_common(serlin_config.think_steps)
             summary += f"常见话题: {', '.join([f'{topic}({count})' for topic, count in common_topics])}\n"
         
         return summary
@@ -1908,12 +1924,12 @@ class SerlinTransformer:
         self.model = TransformerDialogueAI(
             vocab_size=self.processor.vocab_size,
             idx2word=self.processor.idx2word,
-            d_model=256,
+            d_model=512,
             nhead=8,
-            num_encoder_layers=4,
-            num_decoder_layers=4,
+            num_encoder_layers=6,
+            num_decoder_layers=6,
             think_steps=3,
-            max_length=50
+            max_length=100
         )
     
         # 重新初始化训练器
@@ -1990,12 +2006,12 @@ class SerlinTransformer:
             self.model = TransformerDialogueAI(
                 vocab_size=saved_vocab_size,
                 idx2word=self.processor.idx2word,
-                d_model=256,
+                d_model=512,
                 nhead=8,
-                num_encoder_layers=4,
-                num_decoder_layers=4,
+                num_encoder_layers=6,
+                num_decoder_layers=6,
                 think_steps=3,
-                max_length=50
+                max_length=100
             )
             
             self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -2031,28 +2047,35 @@ def print_help():
     print("  '验证数据' - 验证训练数据")
     print("  '重置模型' - 重置模型")
     print("  '创建模板' - 创建训练数据模板")
+    print("  '设置参数' - 设置AI参数")
     print("-" * 50)
 
 def main():
+    #初始默认参数
+    
     print("初始化Transformer版Serlin系统...")
-    
-    trainer = SerlinTransformer()
-    
+    print("当前参数：")
+    print(f"  d_model: {serlin_config.d_model}")
+    print(f"  nhead: {serlin_config.nhead}")
+    print(f"  编码器层数: {serlin_config.num_encoder_layers}")
+    print(f"  解码器层数: {serlin_config.num_decoder_layers}")
+    print(f"  思考步骤: {serlin_config.think_steps}")
+    print(f"  最大序列长度: {serlin_config.max_length}")
+    #初始化
+    trainer = SerlinTransformer(
+        d_model=serlin_config.d_model,
+        nhead=serlin_config.nhead,
+        num_encoder_layers=serlin_config.num_encoder_layers,
+        num_decoder_layers=serlin_config.num_decoder_layers,
+        think_steps=serlin_config.think_steps,
+        max_length=serlin_config.max_length
+        )
     print("系统初始化完成！")
     print("增强版Transformer思考式对话Serlin已就绪")
-    print("特性:")
-    print("  Transformer架构")
-    print("  多步思考过程")
-    print("  长期记忆存储")
-    print("  多轮对话理解")
-    print("  知识库集成")
-    print("  个性化适配")
-    print("  自我反思改进")
-    print("  可训练模型")
     
-    user_id = input("请输入你的用户ID（用于个性化）: ").strip() or "default_user"
+    user_id = input("请输入用户ID：").strip() or "default_user"
     
-    print(f"\n欢迎，用户 {user_id}！开始对话吧！")
+    print(f"\n欢迎，用户 {user_id}！")
     
     print_help()
     
@@ -2083,7 +2106,26 @@ def main():
                 summary = trainer.get_conversation_summary()
                 print(f"\n{summary}")
                 continue
-                
+            elif user_input.lower() in ['设置参数', 'set']:
+                serlin_config.d_model = int(input(f"请输入d_model (当前: {serlin_config.d_model}): ") or serlin_config.d_model)
+                serlin_config.nhead = int(input(f"请输入nhead (当前: {serlin_config.nhead}): ") or serlin_config.nhead)
+                serlin_config.num_encoder_layers = int(input(f"请输入编码器层数 (当前: {serlin_config.num_encoder_layers}): ") or serlin_config.num_encoder_layers)
+                serlin_config.num_decoder_layers = int(input(f"请输入解码器层数 (当前: {serlin_config.num_decoder_layers}): ") or serlin_config.num_decoder_layers)
+                serlin_config.think_steps = int(input(f"请输入思考步骤 (当前: {serlin_config.think_steps}): ") or serlin_config.think_steps)
+                serlin_config.max_length = int(input(f"请输入最大序列长度 (当前: {serlin_config.max_length}): ") or serlin_config.max_length)
+                trainer.model = TransformerDialogueAI(
+                        vocab_size=trainer.processor.vocab_size,
+                        idx2word=trainer.processor.idx2word,
+                        d_model=serlin_config.d_model,
+                        nhead=serlin_config.nhead,
+                        num_encoder_layers=serlin_config.num_encoder_layers,
+                        num_decoder_layers=serlin_config.num_decoder_layers,
+                        think_steps=serlin_config.think_steps,
+                        max_length=serlin_config.max_length
+                    )
+                trainer.trainer = TransformerTrainer(trainer.model, trainer.processor)
+                print("模型已重新初始化")
+
             elif user_input.lower() in ['词汇表', 'vocab']:
                 print(f"\n词汇表大小: {trainer.processor.vocab_size}")
                 print(f"模型词汇表大小: {trainer.model.vocab_size}")
@@ -2123,12 +2165,12 @@ def main():
                     trainer.model = TransformerDialogueAI(
                         vocab_size=trainer.processor.vocab_size,
                         idx2word=trainer.processor.idx2word,
-                        d_model=256,
-                        nhead=8,
-                        num_encoder_layers=4,
-                        num_decoder_layers=4,
-                        think_steps=3,
-                        max_length=50
+                        d_model=serlin_config.d_model,
+                        nhead=serlin_config.nhead,
+                        num_encoder_layers=serlin_config.num_encoder_layers,
+                        num_decoder_layers=serlin_config.num_decoder_layers,
+                        think_steps=serlin_config.think_steps,
+                        max_length=serlin_config.max_length
                     )
                     trainer.trainer = TransformerTrainer(trainer.model, trainer.processor)
                     print("模型已重新初始化以适应新词汇表")
