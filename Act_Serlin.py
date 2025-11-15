@@ -1101,7 +1101,9 @@ class SerlinTransformer:
     
     def process_user_input(self, user_id, user_input):
         """处理用户输入的全流程"""
+        self.processor.auto_expand_vocab(user_input)
         self.sync_model_vocab()
+        self.processor.sync_vocab_to_array()
         user_history = self.memory.get_user_history(user_id)
         user_profile, user_prefs = self.personality_adaptation.get_user_profile(user_id)
         
