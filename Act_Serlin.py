@@ -2125,7 +2125,7 @@ def main():
                     )
                 trainer.trainer = TransformerTrainer(trainer.model, trainer.processor)
                 print("模型已重新初始化")
-
+                continue
             elif user_input.lower() in ['词汇表', 'vocab']:
                 print(f"\n词汇表大小: {trainer.processor.vocab_size}")
                 print(f"模型词汇表大小: {trainer.model.vocab_size}")
