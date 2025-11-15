@@ -1,5 +1,5 @@
 # Act_Serlin_p
 
-**ChatBot with transformer**
+**ChatBot with Pytorch(transformer)**
 
 (Need to exercise)
