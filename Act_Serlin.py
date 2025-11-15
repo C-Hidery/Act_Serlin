@@ -2051,7 +2051,44 @@ def print_help():
     print("-" * 50)
 
 def main():
-    #初始默认参数
+    # 参数配置文件路径
+    config_file = "serlin_config.json"
+    
+    # 尝试从JSON文件加载参数，如果不存在则创建默认文件
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+            print(f"从配置文件 {config_file} 加载参数...")
+            
+            # 更新SerlinConfig实例的参数
+            serlin_config.d_model = config_data.get('d_model', serlin_config.d_model)
+            serlin_config.nhead = config_data.get('nhead', serlin_config.nhead)
+            serlin_config.num_encoder_layers = config_data.get('num_encoder_layers', serlin_config.num_encoder_layers)
+            serlin_config.num_decoder_layers = config_data.get('num_decoder_layers', serlin_config.num_decoder_layers)
+            serlin_config.think_steps = config_data.get('think_steps', serlin_config.think_steps)
+            serlin_config.max_length = config_data.get('max_length', serlin_config.max_length)
+            
+    except FileNotFoundError:
+        print(f"配置文件 {config_file} 不存在，创建默认配置文件...")
+        # 创建默认配置
+        default_config = {
+            "d_model": serlin_config.d_model,
+            "nhead": serlin_config.nhead,
+            "num_encoder_layers": serlin_config.num_encoder_layers,
+            "num_decoder_layers": serlin_config.num_decoder_layers,
+            "think_steps": serlin_config.think_steps,
+            "max_length": serlin_config.max_length,
+            "description": "Serlin Transformer 配置文件",
+            "created_date": datetime.datetime.now().isoformat(),
+            "notes": "修改这些参数后需要重启系统才能生效"
+        }
+        
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(default_config, f, ensure_ascii=False, indent=2)
+        print(f"默认配置文件已创建: {config_file}")
+    
+    except Exception as e:
+        print(f"加载配置文件时出错: {e}，使用默认参数")
     
     print("初始化Transformer版Serlin系统...")
     print("当前参数：")
@@ -2061,7 +2098,8 @@ def main():
     print(f"  解码器层数: {serlin_config.num_decoder_layers}")
     print(f"  思考步骤: {serlin_config.think_steps}")
     print(f"  最大序列长度: {serlin_config.max_length}")
-    #初始化
+    
+    # 初始化
     trainer = SerlinTransformer(
         d_model=serlin_config.d_model,
         nhead=serlin_config.nhead,
@@ -2069,7 +2107,8 @@ def main():
         num_decoder_layers=serlin_config.num_decoder_layers,
         think_steps=serlin_config.think_steps,
         max_length=serlin_config.max_length
-        )
+    )
+    
     print("系统初始化完成！")
     print("增强版Transformer思考式对话Serlin已就绪")
     
@@ -2106,26 +2145,57 @@ def main():
                 summary = trainer.get_conversation_summary()
                 print(f"\n{summary}")
                 continue
+                
             elif user_input.lower() in ['设置参数', 'set']:
-                serlin_config.d_model = int(input(f"请输入d_model (当前: {serlin_config.d_model}): ") or serlin_config.d_model)
-                serlin_config.nhead = int(input(f"请输入nhead (当前: {serlin_config.nhead}): ") or serlin_config.nhead)
-                serlin_config.num_encoder_layers = int(input(f"请输入编码器层数 (当前: {serlin_config.num_encoder_layers}): ") or serlin_config.num_encoder_layers)
-                serlin_config.num_decoder_layers = int(input(f"请输入解码器层数 (当前: {serlin_config.num_decoder_layers}): ") or serlin_config.num_decoder_layers)
-                serlin_config.think_steps = int(input(f"请输入思考步骤 (当前: {serlin_config.think_steps}): ") or serlin_config.think_steps)
-                serlin_config.max_length = int(input(f"请输入最大序列长度 (当前: {serlin_config.max_length}): ") or serlin_config.max_length)
-                trainer.model = TransformerDialogueAI(
-                        vocab_size=trainer.processor.vocab_size,
-                        idx2word=trainer.processor.idx2word,
-                        d_model=serlin_config.d_model,
-                        nhead=serlin_config.nhead,
-                        num_encoder_layers=serlin_config.num_encoder_layers,
-                        num_decoder_layers=serlin_config.num_decoder_layers,
-                        think_steps=serlin_config.think_steps,
-                        max_length=serlin_config.max_length
-                    )
-                trainer.trainer = TransformerTrainer(trainer.model, trainer.processor)
-                print("模型已重新初始化")
+                # 先显示当前参数
+                print("\n当前参数：")
+                print(f"1. d_model: {serlin_config.d_model}")
+                print(f"2. nhead: {serlin_config.nhead}")
+                print(f"3. 编码器层数: {serlin_config.num_encoder_layers}")
+                print(f"4. 解码器层数: {serlin_config.num_decoder_layers}")
+                print(f"5. 思考步骤: {serlin_config.think_steps}")
+                print(f"6. 最大序列长度: {serlin_config.max_length}")
+                
+                try:
+                    # 获取新参数
+                    new_d_model = int(input(f"请输入d_model (当前: {serlin_config.d_model}): ") or serlin_config.d_model)
+                    new_nhead = int(input(f"请输入nhead (当前: {serlin_config.nhead}): ") or serlin_config.nhead)
+                    new_num_encoder_layers = int(input(f"请输入编码器层数 (当前: {serlin_config.num_encoder_layers}): ") or serlin_config.num_encoder_layers)
+                    new_num_decoder_layers = int(input(f"请输入解码器层数 (当前: {serlin_config.num_decoder_layers}): ") or serlin_config.num_decoder_layers)
+                    new_think_steps = int(input(f"请输入思考步骤 (当前: {serlin_config.think_steps}): ") or serlin_config.think_steps)
+                    new_max_length = int(input(f"请输入最大序列长度 (当前: {serlin_config.max_length}): ") or serlin_config.max_length)
+                    
+                    # 更新SerlinConfig实例
+                    serlin_config.d_model = new_d_model
+                    serlin_config.nhead = new_nhead
+                    serlin_config.num_encoder_layers = new_num_encoder_layers
+                    serlin_config.num_decoder_layers = new_num_decoder_layers
+                    serlin_config.think_steps = new_think_steps
+                    serlin_config.max_length = new_max_length
+                    
+                    # 保存到配置文件
+                    config_data = {
+                        "d_model": serlin_config.d_model,
+                        "nhead": serlin_config.nhead,
+                        "num_encoder_layers": serlin_config.num_encoder_layers,
+                        "num_decoder_layers": serlin_config.num_decoder_layers,
+                        "think_steps": serlin_config.think_steps,
+                        "max_length": serlin_config.max_length,
+                        "description": "Serlin Transformer 配置文件",
+                        "last_modified": datetime.datetime.now().isoformat(),
+                        "notes": "修改这些参数后需要重启系统才能生效"
+                    }
+                    
+                    with open(config_file, 'w', encoding='utf-8') as f:
+                        json.dump(config_data, f, ensure_ascii=False, indent=2)
+                    
+                    print("参数已更新并保存到配置文件！")
+                    print("注意：需要重启系统才能使新的参数生效")
+                    
+                except ValueError:
+                    print("输入无效，参数未更改")
                 continue
+                
             elif user_input.lower() in ['词汇表', 'vocab']:
                 print(f"\n词汇表大小: {trainer.processor.vocab_size}")
                 print(f"模型词汇表大小: {trainer.model.vocab_size}")
@@ -2233,6 +2303,5 @@ def main():
         except Exception as e:
             print(f"发生错误: {e}")
             print("请重新输入或输入'退出'结束对话")
-
 if __name__ == "__main__":
     main()
