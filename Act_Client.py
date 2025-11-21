@@ -4,12 +4,13 @@ import json
 import datetime
 
 class SerlinClient:
+    
     def __init__(self, server_host, server_port):
         self.server_host = server_host
         self.server_port = server_port
         self.user_id = "default_user"
         self.show_thinking = True
-        
+        self.timeout = 1000  # Default timeout in seconds
     def send_request(self, command, data=None):
         """Send request to server and return response"""
         if data is None:
@@ -24,7 +25,7 @@ class SerlinClient:
         try:
             # Create socket and connect to server
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_socket.settimeout(10)
+            client_socket.settimeout(self.timeout)
             print(f"Attempting to connect to {self.server_host}:{self.server_port}...")
         
             client_socket.connect((self.server_host, self.server_port))
@@ -204,6 +205,7 @@ def print_help():
     print("  'reset model' - Reset model")
     print("  'create template' - Create training data template")
     print("  'set parameters' - Set AI parameters")
+    print("  'set timeout' - Set connection timeout")
     print("-" * 50)
 
 def interactive_training_mode(client):
@@ -469,7 +471,10 @@ def main():
                     else:
                         print(f"Error expanding vocabulary: {result.get('message')}")
                 continue
-                
+            elif user_input.lower() in ['set timeout']:
+                client.timeout = int(input("Please enter connection timeout in seconds (default 1000): ").strip() or "1000")
+                print(f"Connection timeout set to {client.timeout} seconds")
+                continue
             elif user_input.lower() in ['validate data', 'validate']:
                 result = client.validate_training_data()
                 if result.get('status') == 'success':
