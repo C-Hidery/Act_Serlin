@@ -472,7 +472,11 @@ def main():
                         print(f"Error expanding vocabulary: {result.get('message')}")
                 continue
             elif user_input.lower() in ['set timeout']:
-                client.timeout = int(input("Please enter connection timeout in seconds (default 1000): ").strip() or "1000")
+                r1 = input("Please enter connection timeout in seconds (default 1000): ").strip()
+                if r1 == 'None':
+                    client.timeout = None
+                else:
+                    client.timeout = int(r1) if r1.isdigit() else 1000
                 print(f"Connection timeout set to {client.timeout} seconds")
                 continue
             elif user_input.lower() in ['validate data', 'validate']:
