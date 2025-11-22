@@ -1298,12 +1298,12 @@ class SerlinTransformer:
             self.model = TransformerDialogueAI(
                 vocab_size=current_vocab_size,
                 idx2word=self.processor.idx2word,
-                d_model=512,
-                nhead=8,
-                num_encoder_layers=6,
-                num_decoder_layers=6,
-                think_steps=3,
-                max_length=100
+                d_model=serlin_config.d_model,
+                nhead=serlin_config.nhead,
+                num_encoder_layers=serlin_config.num_encoder_layers,
+                num_decoder_layers=serlin_config.num_decoder_layers,
+                think_steps=serlin_config.think_steps,
+                max_length=serlin_config.max_length
             )
     
             # Try to restore parameters
@@ -1712,12 +1712,12 @@ class SerlinTransformer:
         self.model = TransformerDialogueAI(
             vocab_size=self.processor.vocab_size,
             idx2word=self.processor.idx2word,
-            d_model=512,
-            nhead=8,
-            num_encoder_layers=6,
-            num_decoder_layers=6,
-            think_steps=3,
-            max_length=100
+            d_model=serlin_config.d_model,
+            nhead=serlin_config.nhead,
+            num_encoder_layers=serlin_config.num_encoder_layers,
+            num_decoder_layers=serlin_config.num_decoder_layers,
+            think_steps=serlin_config.think_steps,
+            max_length=serlin_config.max_length
         )
     
         # Reinitialize trainer
@@ -1795,12 +1795,12 @@ class SerlinTransformer:
             self.model = TransformerDialogueAI(
                 vocab_size=saved_vocab_size,
                 idx2word=self.processor.idx2word,
-                d_model=512,
-                nhead=8,
-                num_encoder_layers=6,
-                num_decoder_layers=6,
-                think_steps=3,
-                max_length=100
+                d_model=serlin_config.d_model,
+                nhead=serlin_config.nhead,
+                num_encoder_layers=serlin_config.num_encoder_layers,
+                num_decoder_layers=serlin_config.num_decoder_layers,
+                think_steps=serlin_config.think_steps,
+                max_length=serlin_config.max_length
             )
             
             self.model.load_state_dict(checkpoint['model_state_dict'])
