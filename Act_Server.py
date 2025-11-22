@@ -1819,7 +1819,9 @@ class SerlinTransformer:
 
     def get_vocabulary_info(self):
         """Get vocabulary information"""
+        
         return {
+            "status": "success",
             "vocab_size": self.processor.vocab_size,
             "model_vocab_size": self.model.vocab_size,
             "sample_words": list(self.processor.word2idx.keys())[:50]

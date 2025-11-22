@@ -454,10 +454,9 @@ def main():
             elif user_input.lower() in ['vocabulary', 'vocab']:
                 vocab_result = client.get_vocabulary_info()
                 if vocab_result.get('status') == 'success':
-                    data = vocab_result.get('data', {})
-                    print(f"\nVocabulary size: {data.get('vocab_size', 0)}")
-                    print(f"Model vocabulary size: {data.get('model_vocab_size', 0)}")
-                    print(f"Sample vocabulary: {data.get('sample_words', [])}")
+                    print(f"\nVocabulary size: {vocab_result.get('vocab_size', 0)}")
+                    print(f"Model vocabulary size: {vocab_result.get('model_vocab_size', 0)}")
+                    print(f"Sample vocabulary: {vocab_result.get('sample_words', [])}")
                 else:
                     print(f"Error getting vocabulary info: {vocab_result.get('message')}")
                 continue
