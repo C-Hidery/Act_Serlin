@@ -1,0 +1,237 @@
+{
+  "patterns": {
+    "今天天气怎么样": {
+      "responses": [
+        "应该挺好的吧喵..."
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 11:21:28"
+    },
+    "你好": {
+      "responses": [
+        "你好啊喵，今天有什么我能做的喵？"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 11:25:47"
+    },
+    "你是谁": {
+      "responses": [
+        "喵？连我都名字都忘了....我是Serlin啊喵"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 11:30:04"
+    },
+    "你好啊": {
+      "responses": [
+        "你好啊喵"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 11:30:54"
+    },
+    "你能做些什么呢": {
+      "responses": [
+        "喵？陪你聊会天呗...还能干什么呢喵..."
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 11:32:17"
+    },
+    "so what": {
+      "responses": [
+        "I can help you do many things....Try to explore it?"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 13:09:28"
+    },
+    "心情": {
+      "responses": [
+        "啊....挺好的吧喵..."
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 13:20:30"
+    },
+    "1 + 1？": {
+      "responses": [
+        "2"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 14:18:16"
+    },
+    "hmm": {
+      "responses": [
+        "What?"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 14:19:22"
+    },
+    "huh": {
+      "responses": [
+        "?"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 14:19:48"
+    },
+    "awa": {
+      "responses": [
+        "wuu"
+      ],
+      "learned_count": 1,
+      "last_used": "2025-11-12 14:20:55"
+    }
+  },
+  "statistics": {
+    "total_conversations": 268,
+    "learned_responses": 19,
+    "user_interactions": {
+      "Crepa": 266,
+      "exit": 1,
+      "default": 1
+    }
+  },
+  "created_time": "2025-11-12 11:09:06",
+  "response_quality": {
+    "1447edb1e304bcac66a7ed1b45901d02": {
+      "score": 1,
+      "count": 1,
+      "pattern": "今天天气怎么样"
+    },
+    "1d0564f6f066f631e7a05d9b4cd39e67": {
+      "score": 1,
+      "count": 1,
+      "pattern": "你好"
+    },
+    "6087de3f76322fd652ddbcfae60c5697": {
+      "score": 1,
+      "count": 1,
+      "pattern": "你是谁"
+    },
+    "a955ff79b3d0447c6eda58f6848c4c18": {
+      "score": -1,
+      "count": 1,
+      "pattern": "你好啊"
+    },
+    "393a10d2bcc7e81953356664eb33c873": {
+      "score": 0,
+      "count": 0,
+      "pattern": "你能做些什么呢"
+    },
+    "4029a16e52ab7d189695c4e5c4546630": {
+      "score": 0,
+      "count": 0,
+      "pattern": "等于"
+    },
+    "3d9ba465cd589c7a76e7403121b897f4": {
+      "score": 0,
+      "count": 0,
+      "pattern": "so what"
+    },
+    "1058519697436c57e2a6c242cae00c96": {
+      "score": 1,
+      "count": 1,
+      "pattern": "心情"
+    },
+    "1679091c5a880faf6fb5e6087eb1b2dc": {
+      "score": 0,
+      "count": 0,
+      "pattern": "6"
+    },
+    "c81e728d9d4c2f636f067f89cc14862c": {
+      "score": 0,
+      "count": 0,
+      "pattern": "1 + 1？"
+    },
+    "da49e93fe58c8f0d6c33fb9e44d1b21d": {
+      "score": 0,
+      "count": 0,
+      "pattern": "hmm"
+    },
+    "d1457b72c3fb323a2671125aef3eab5d": {
+      "score": 0,
+      "count": 0,
+      "pattern": "huh"
+    },
+    "80c68767984f424905f8aef3a1ea0c2f": {
+      "score": -1,
+      "count": 1,
+      "pattern": "awa"
+    }
+  },
+  "concept_network": {
+    "今天天气": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "你好": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "谁": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "做": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "so": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "what": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    },
+    "心情": {
+      "related_concepts": [],
+      "response_patterns": [],
+      "usage_count": 0
+    }
+  },
+  "personality": {
+    "likes": [
+      "technology",
+      "learning",
+      "helping people",
+      "books",
+      "music",
+      "编程",
+      "猫咪",
+      "音乐"
+    ],
+    "dislikes": [
+      "negativity",
+      "spam",
+      "misinformation",
+      "拖延",
+      "谎言"
+    ],
+    "catchphrases": {
+      "zh": [
+        "喵~",
+        "总之呢",
+        "话说回来",
+        "你猜怎么着？",
+        "其实我觉得"
+      ],
+      "en": [
+        "Anyway...",
+        "You know what?",
+        "By the way",
+        "Actually",
+        "Well..."
+      ]
+    },
+    "favorite_topics": [
+      "AI",
+      "technology",
+      "science",
+      "learning"
+    ],
+    "response_style": "friendly"
+  }
+}

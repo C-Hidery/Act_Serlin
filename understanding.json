@@ -1,0 +1,130 @@
+{
+  "learning_progress": [],
+  "conversation_history": [
+    {
+      "user_input": "你学习啥",
+      "response": "我明白你在说 '你'。",
+      "timestamp": "2025-11-12T19:47:01.502613"
+    },
+    {
+      "user_input": "你学习啥",
+      "response": "关于 '你'，我理解一些。",
+      "timestamp": "2025-11-12T19:47:06.071312"
+    },
+    {
+      "user_input": "你学习啥",
+      "response": "关于 '你'，我理解一些。",
+      "timestamp": "2025-11-12T19:47:07.106206"
+    },
+    {
+      "user_input": "你学习啥",
+      "response": "'你'... 这个词我学过。",
+      "timestamp": "2025-11-12T19:47:08.088227"
+    },
+    {
+      "user_input": "？",
+      "response": "请告诉我更多信息，这样我才能学习。",
+      "timestamp": "2025-11-12T19:47:09.207117"
+    }
+  ],
+  "cognition_level": {
+    "understanding_level": 0.0,
+    "vocabulary_size": 10,
+    "conversation_experience": 7,
+    "learning_momentum": 0.1
+  },
+  "concept_network": {
+    "我": {
+      "meaning": "说话的人自己",
+      "examples": [
+        "例子: 说话的人自己"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897179",
+      "usage_count": 1
+    },
+    "你": {
+      "meaning": "正在对话的人",
+      "examples": [
+        "例子: 正在对话的人"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:47:08.088199",
+      "usage_count": 5
+    },
+    "是": {
+      "meaning": "表示肯定或存在",
+      "examples": [
+        "例子: 表示肯定或存在"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897211",
+      "usage_count": 1
+    },
+    "什么": {
+      "meaning": "用来提问的词语",
+      "examples": [
+        "例子: 用来提问的词语"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897212",
+      "usage_count": 1
+    },
+    "吗": {
+      "meaning": "表示疑问的语气词",
+      "examples": [
+        "例子: 表示疑问的语气词"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897214",
+      "usage_count": 1
+    },
+    "好": {
+      "meaning": "表示赞同或状态良好",
+      "examples": [
+        "例子: 表示赞同或状态良好"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897215",
+      "usage_count": 1
+    },
+    "不": {
+      "meaning": "表示否定",
+      "examples": [
+        "例子: 表示否定"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897217",
+      "usage_count": 1
+    },
+    "了": {
+      "meaning": "表示变化或完成的语气词",
+      "examples": [
+        "例子: 表示变化或完成的语气词"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:46:33.897218",
+      "usage_count": 1
+    },
+    "你好": {
+      "meaning": "从上下文理解: 你好",
+      "examples": [
+        "你好"
+      ],
+      "understanding_score": 0.3,
+      "last_used": "2025-11-12T19:46:45.083753",
+      "usage_count": 1
+    },
+    "学习": {
+      "meaning": "从上下文理解: 你学习啥",
+      "examples": [
+        "你学习啥",
+        "你学习啥",
+        "你学习啥"
+      ],
+      "understanding_score": 0.5,
+      "last_used": "2025-11-12T19:47:08.088209",
+      "usage_count": 4
+    }
+  }
+}
