@@ -184,16 +184,16 @@ class SerlinServer:
                 }
                 
             elif command == 'create_training_template':
-                file_path = data.get('file_path', 'training_template.json')
-                result = self.serlin.create_training_template(file_path)
+                #file_path = data.get('file_path', 'training_template.json')
+                result = self.serlin.create_training_template()
                 return {
                     "status": "success",
-                    "message": "Training template created",
-                    "data": {"file_path": result}
+                    "message": "Training template send.",
+                    "data": result
                 }
                 
             elif command == 'batch_train_from_json':
-                file_path = data.get('file_path')
+                file_path = data.get('training_data')
                 if file_path:
                     result = self.serlin.batch_train_from_json(file_path)
                     return result

@@ -189,18 +189,22 @@ class SerlinClient:
         })
         return response
     
-    def create_training_template(self, file_path="training_template.json"):
+    def create_training_template(self):
         """Create training template on server"""
-        response = self.send_and_recv('create_training_template', {
-            'file_path': file_path
-        })
+        response = self.send_and_recv('create_training_template')
+        fn = f"training_example_{datetime.datetime}.json"
+        with open(fn,'w',encoding='utf-8') as f:
+            json.dump(response.get('data'), f, ensure_ascii=False, indent=2)
+        print(f"Training data template created: {fn}")
         return response
     
     def batch_train_from_json(self, file_path):
         """Batch train from JSON file on server"""
-        response = self.send_and_recv('batch_train_from_json', {
-            'file_path': file_path
-        })
+        with open(file_path, 'r', encoding='utf-8') as f:
+                training_data = json.load(f)
+        response = self.send_and_recv('batch_train_from_json',{
+                'training_data': training_data
+            })
         return response
 
 def print_help():
@@ -224,6 +228,7 @@ def print_help():
     print("  'create template' - Create training data template")
     print("  'set parameters' - Set AI parameters")
     print("  'set timeout' - Set connection timeout")
+    print("  'debug_msg` - Show debug message")
     print("-" * 50)
 
 def interactive_training_mode(client):
