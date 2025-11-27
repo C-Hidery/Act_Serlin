@@ -1,0 +1,478 @@
+# -*- coding: utf-8 -*-
+import json
+import random
+import re
+from datetime import datetime
+import os
+from collections import deque, defaultdict
+import jieba
+
+class IntelligentInfantAI:
+    def __init__(self, name="Serlin", data_file="understanding.json", language="zh"):
+        self.name = name
+        self.data_file = data_file
+        self.language = language
+        
+        # 认知状态
+        self.cognition = {
+            "understanding_level": 0.1,
+            "vocabulary_size": 0,
+            "conversation_experience": 0,
+            "learning_momentum": 0.1
+        }
+        
+        # 知识结构
+        self.knowledge = self.load_knowledge()
+        
+        # 概念网络
+        self.concept_network = defaultdict(lambda: {
+            "meaning": "",
+            "examples": [],
+            "understanding_score": 0.0,
+            "last_used": None,
+            "usage_count": 0
+        })
+        
+        # 对话记忆
+        self.conversation_memory = deque(maxlen=10)
+        
+        # 初始化基础理解
+        self._initialize_basic_understanding()
+        
+        if self.language == "zh":
+            try:
+                jieba.initialize()
+            except:
+                pass
+
+    def _initialize_basic_understanding(self):
+        """初始化基础理解"""
+        if self.language == "zh":
+            basic_concepts = {
+                "我": "说话的人自己",
+                "你": "正在对话的人", 
+                "是": "表示肯定或存在",
+                "什么": "用来提问的词语",
+                "吗": "表示疑问的语气词",
+                "好": "表示赞同或状态良好",
+                "不": "表示否定",
+                "了": "表示变化或完成的语气词"
+            }
+        else:
+            basic_concepts = {
+                "I": "the person speaking",
+                "you": "the person being spoken to",
+                "is": "indicates existence or identity", 
+                "what": "used to ask questions",
+                "?": "indicates a question",
+                "good": "positive or satisfactory",
+                "no": "negative response",
+                "the": "definite article"
+            }
+        
+        for concept, meaning in basic_concepts.items():
+            self.concept_network[concept] = {
+                "meaning": meaning,
+                "examples": [f"例子: {meaning}"],
+                "understanding_score": 0.5,
+                "last_used": datetime.now().isoformat(),
+                "usage_count": 1
+            }
+
+    def load_knowledge(self):
+        """加载知识"""
+        try:
+            if os.path.exists(self.data_file):
+                with open(self.data_file, 'r', encoding='utf-8') as f:
+                    knowledge = json.load(f)
+                    # 恢复概念网络
+                    if "concept_network" in knowledge:
+                        for concept, data in knowledge["concept_network"].items():
+                            self.concept_network[concept].update(data)
+                    return knowledge
+            return {
+                "learning_progress": [],
+                "conversation_history": [],
+                "cognition_level": self.cognition
+            }
+        except Exception as e:
+            print(f"加载知识失败: {e}")
+            return {
+                "learning_progress": [],
+                "conversation_history": [],
+                "cognition_level": self.cognition.copy()
+            }
+
+    def save_knowledge(self):
+        """保存知识"""
+        try:
+            save_data = {
+                "learning_progress": self.knowledge.get("learning_progress", []),
+                "conversation_history": list(self.conversation_memory)[-5:],
+                "cognition_level": self.cognition,
+                "concept_network": {concept: dict(data) for concept, data in self.concept_network.items()}
+            }
+            
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2)
+            return True
+        except Exception as e:
+            print(f"保存知识失败: {e}")
+            return False
+
+    def _tokenize(self, text):
+        """分词"""
+        if self.language == "zh":
+            try:
+                words = jieba.cut(text)
+                return [word for word in words if word.strip() and len(word) > 0]
+            except:
+                return [char for char in text if char.strip()]
+        else:
+            return re.findall(r'\b\w+\b', text.lower())
+
+    def process_explanation_command(self, user_input):
+        """处理解释命令"""
+        # 支持多种格式的解释命令
+        patterns = [
+            r'解释[:：]\s*([^=]+)=(.+)',
+            r'explain[:：]\s*([^=]+)=(.+)',
+            r'([^=]+)=(.+)'
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, user_input)
+            if match:
+                concept = match.group(1).strip()
+                meaning = match.group(2).strip()
+                
+                # 学习这个概念
+                self._learn_concept(concept, meaning, is_explanation=True)
+                
+                if self.language == "zh":
+                    return f"谢谢！我学会了 '{concept}' 的意思是：{meaning}"
+                else:
+                    return f"Thank you! I learned that '{concept}' means: {meaning}"
+        
+        return None
+
+    def _learn_concept(self, concept, context, is_explanation=False):
+        """学习概念"""
+        if concept not in self.concept_network:
+            self.concept_network[concept] = {
+                "meaning": context if is_explanation else f"从上下文理解: {context}",
+                "examples": [context],
+                "understanding_score": 0.7 if is_explanation else 0.3,
+                "last_used": datetime.now().isoformat(),
+                "usage_count": 1
+            }
+        else:
+            # 加强已有概念
+            current_data = self.concept_network[concept]
+            current_data["examples"].append(context)
+            current_data["usage_count"] += 1
+            current_data["last_used"] = datetime.now().isoformat()
+            
+            # 如果是解释，更新含义并提高理解度
+            if is_explanation:
+                current_data["meaning"] = context
+                current_data["understanding_score"] = min(1.0, current_data["understanding_score"] + 0.3)
+            else:
+                current_data["understanding_score"] = min(1.0, current_data["understanding_score"] + 0.1)
+
+    def analyze_conversation(self, user_input):
+        """分析对话"""
+        words = self._tokenize(user_input)
+        
+        analysis = {
+            "words": words,
+            "understood_concepts": [],
+            "unfamiliar_concepts": [],
+            "is_question": any(word in ["什么", "为什么", "怎么", "吗", "？", "?"] for word in words)
+        }
+        
+        # 分析每个词的理解程度
+        for word in words:
+            if word in self.concept_network:
+                score = self.concept_network[word]["understanding_score"]
+                if score > 0.4:  # 理解度阈值
+                    analysis["understood_concepts"].append((word, score))
+                else:
+                    analysis["unfamiliar_concepts"].append(word)
+            elif len(word) > 1:  # 避免标点符号
+                analysis["unfamiliar_concepts"].append(word)
+        
+        # 按理解度排序
+        analysis["understood_concepts"].sort(key=lambda x: x[1], reverse=True)
+        
+        return analysis
+
+    def generate_response(self, analysis, user_input):
+        """生成回应"""
+        # 如果有理解的概念，尝试使用它们
+        if analysis["understood_concepts"]:
+            understood_words = [word for word, score in analysis["understood_concepts"]]
+            
+            # 如果是问题，尝试回答
+            if analysis["is_question"]:
+                return self._answer_question(understood_words, user_input)
+            
+            # 否则，基于理解的概念回应
+            return self._generate_based_on_understanding(understood_words, user_input)
+        
+        # 如果有不熟悉的概念，询问
+        if analysis["unfamiliar_concepts"]:
+            return self._ask_about_unfamiliar(analysis["unfamiliar_concepts"])
+        
+        # 默认回应
+        if self.language == "zh":
+            return "请告诉我更多信息，这样我才能学习。"
+        else:
+            return "Please tell me more so I can learn."
+
+    def _answer_question(self, understood_words, user_input):
+        """回答问题"""
+        # 查找问题中的关键概念
+        for word in understood_words:
+            if word in self.concept_network:
+                meaning = self.concept_network[word]["meaning"]
+                if self.language == "zh":
+                    responses = [
+                        f"关于 '{word}'，我知道它的意思是：{meaning}",
+                        f"我理解 '{word}' 是：{meaning}",
+                        f"'{word}' 的意思是：{meaning}"
+                    ]
+                else:
+                    responses = [
+                        f"About '{word}', I know it means: {meaning}",
+                        f"I understand '{word}' as: {meaning}",
+                        f"'{word}' means: {meaning}"
+                    ]
+                return random.choice(responses)
+        
+        if self.language == "zh":
+            return "我还在学习如何回答这个问题。"
+        else:
+            return "I'm still learning how to answer this question."
+
+    def _generate_based_on_understanding(self, understood_words, user_input):
+        """基于理解生成回应"""
+        # 使用最理解的概念
+        best_word = understood_words[0] if understood_words else None
+        
+        if best_word and best_word in self.concept_network:
+            meaning = self.concept_network[best_word]["meaning"]
+            
+            if self.language == "zh":
+                responses = [
+                    f"我明白你在说 '{best_word}'。",
+                    f"关于 '{best_word}'，我理解一些。",
+                    f"'{best_word}'... 这个词我学过。"
+                ]
+                
+                # 如果理解度足够高，展示含义
+                if self.concept_network[best_word]["understanding_score"] > 0.6:
+                    responses.extend([
+                        f"我知道 '{best_word}' 的意思是：{meaning}",
+                        f"关于 '{best_word}'，我记得是：{meaning}"
+                    ])
+            else:
+                responses = [
+                    f"I understand you're talking about '{best_word}'.",
+                    f"About '{best_word}', I know something.",
+                    f"'{best_word}'... I've learned this word."
+                ]
+                
+                if self.concept_network[best_word]["understanding_score"] > 0.6:
+                    responses.extend([
+                        f"I know '{best_word}' means: {meaning}",
+                        f"About '{best_word}', I remember: {meaning}"
+                    ])
+            
+            return random.choice(responses)
+        
+        if self.language == "zh":
+            return "我还在学习理解这些概念。"
+        else:
+            return "I'm still learning to understand these concepts."
+
+    def _ask_about_unfamiliar(self, unfamiliar_concepts):
+        """询问不熟悉的概念"""
+        concept = random.choice(unfamiliar_concepts)
+        
+        if self.language == "zh":
+            responses = [
+                f"'{concept}' 是什么意思？",
+                f"我不太理解 '{concept}' 这个词。",
+                f"能告诉我 '{concept}' 的意思吗？"
+            ]
+        else:
+            responses = [
+                f"What does '{concept}' mean?",
+                f"I don't understand the word '{concept}'.",
+                f"Can you tell me what '{concept}' means?"
+            ]
+        
+        return random.choice(responses)
+
+    def chat(self, user_input):
+        """主要对话方法"""
+        # 首先检查是否是解释命令
+        explanation_response = self.process_explanation_command(user_input)
+        if explanation_response:
+            return explanation_response
+        
+        # 分析对话
+        analysis = self.analyze_conversation(user_input)
+        
+        # 学习新概念
+        for concept in analysis["unfamiliar_concepts"]:
+            self._learn_concept(concept, user_input)
+        
+        # 加强已理解概念
+        for concept, score in analysis["understood_concepts"]:
+            self.concept_network[concept]["usage_count"] += 1
+            self.concept_network[concept]["last_used"] = datetime.now().isoformat()
+        
+        # 更新认知状态
+        self.cognition["vocabulary_size"] = len(self.concept_network)
+        self.cognition["conversation_experience"] += 1
+        
+        # 计算理解水平（基于理解度大于0.5的概念比例）
+        understood_count = sum(1 for data in self.concept_network.values() if data["understanding_score"] > 0.5)
+        if self.cognition["vocabulary_size"] > 0:
+            self.cognition["understanding_level"] = understood_count / self.cognition["vocabulary_size"]
+        
+        # 生成回应
+        response = self.generate_response(analysis, user_input)
+        
+        # 记录对话
+        self.conversation_memory.append({
+            "user_input": user_input,
+            "response": response,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        return response
+
+    def show_progress(self):
+        """显示学习进度"""
+        if self.language == "zh":
+            print(f"\n=== {self.name}的学习进度 ===")
+            print(f"理解水平: {self.cognition['understanding_level']:.2f}/1.0")
+            print(f"词汇量: {self.cognition['vocabulary_size']} 个概念")
+            print(f"对话经验: {self.cognition['conversation_experience']} 次")
+            
+            # 显示最理解的概念
+            well_understood = []
+            for concept, data in self.concept_network.items():
+                if data["understanding_score"] > 0.5:
+                    well_understood.append((concept, data["understanding_score"]))
+            
+            if well_understood:
+                well_understood.sort(key=lambda x: x[1], reverse=True)
+                print(f"\n最理解的概念:")
+                for concept, score in well_understood[:8]:
+                    meaning = data["meaning"][:40] + "..." if len(data["meaning"]) > 40 else data["meaning"]
+                    print(f"  '{concept}' - 理解度: {score:.2f}, 含义: {meaning}")
+        else:
+            print(f"\n=== {self.name}'s Learning Progress ===")
+            print(f"Understanding Level: {self.cognition['understanding_level']:.2f}/1.0")
+            print(f"Vocabulary: {self.cognition['vocabulary_size']} concepts")
+            print(f"Conversation Experience: {self.cognition['conversation_experience']} times")
+            
+            well_understood = []
+            for concept, data in self.concept_network.items():
+                if data["understanding_score"] > 0.5:
+                    well_understood.append((concept, data["understanding_score"]))
+            
+            if well_understood:
+                well_understood.sort(key=lambda x: x[1], reverse=True)
+                print(f"\nBest Understood Concepts:")
+                for concept, score in well_understood[:8]:
+                    meaning = data["meaning"][:40] + "..." if len(data["meaning"]) > 40 else data["meaning"]
+                    print(f"  '{concept}' - Understanding: {score:.2f}, Meaning: {meaning}")
+
+    def interactive_session(self):
+        """交互式会话"""
+        if self.language == "zh":
+            print(f"{self.name}: 你好！我是一个正在学习理解的AI。")
+            print("请和我对话，或者使用以下格式教我概念：")
+            print("  '概念=含义' 或 '解释:概念=含义'")
+            print("例如: '苹果=一种水果' 或 '解释:苹果=一种水果'")
+            print("输入 '进度' 查看学习进度，输入 '退出' 结束对话")
+            print()
+        else:
+            print(f"{self.name}: Hello! I'm an AI learning to understand.")
+            print("Please talk with me, or teach me concepts using:")
+            print("  'concept=meaning' or 'explain:concept=meaning'")
+            print("Example: 'apple=a kind of fruit' or 'explain:apple=a kind of fruit'")
+            print("Type 'progress' to see learning progress, 'exit' to end conversation")
+            print()
+        
+        while True:
+            try:
+                user_input = input("You: ").strip()
+                
+                if not user_input:
+                    continue
+                
+                if user_input.lower() in ["exit", "quit", "bye", "退出", "结束"]:
+                    if self.language == "zh":
+                        print(f"{self.name}: 谢谢你的教导！我会记住学到的知识。")
+                    else:
+                        print(f"{self.name}: Thank you for teaching me! I'll remember what I learned.")
+                    self.save_knowledge()
+                    break
+                
+                elif user_input in ["进度", "progress", "状态"]:
+                    self.show_progress()
+                    continue
+                
+                response = self.chat(user_input)
+                print(f"{self.name}: {response}")
+                print()
+                
+            except KeyboardInterrupt:
+                if self.language == "zh":
+                    print(f"\n{self.name}: 对话结束。感谢你的耐心教导！")
+                else:
+                    print(f"\n{self.name}: Conversation ended. Thank you for your patient teaching!")
+                self.save_knowledge()
+                break
+            except Exception as e:
+                if self.language == "zh":
+                    print(f"{self.name}: 我有点困惑，让我们继续吧。")
+                else:
+                    print(f"{self.name}: I'm a bit confused, let's continue.")
+                print()
+
+# 使用示例
+if __name__ == "__main__":
+    # 选择语言
+    print("选择语言 / Select language:")
+    print("1. 中文 (Chinese)")
+    print("2. English")
+    
+    while True:
+        choice = input("请输入选择 / Please enter choice (1 or 2): ").strip()
+        if choice == "1":
+            language = "zh"
+            break
+        elif choice == "2":
+            language = "en"
+            break
+        else:
+            print("无效选择，请重新输入 / Invalid choice, please try again")
+    
+    # 创建AI实例
+    ai = IntelligentInfantAI(name="Serlin", data_file="understanding.json", language=language)
+    
+    # 显示初始状态
+    
+    # 开始交互式学习
+    ai.interactive_session()
+    
+    # 显示最终进度
+    print("\n" + "="*50)
+    ai.show_progress()

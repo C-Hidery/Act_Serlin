@@ -4,10 +4,12 @@ import random
 import re
 from datetime import datetime
 import os
-from collections import deque
+from collections import deque, defaultdict
 import hashlib
 import jieba
 import jieba.posseg as pseg
+import math
+from itertools import combinations
 
 class AdvancedChatAI:
     def __init__(self, name="Serlin", data_file="chat_data.json", language="zh"):
@@ -28,20 +30,39 @@ class AdvancedChatAI:
         self.conversation_history = deque(maxlen=20)
         self.learning_mode = True
         self.recent_responses = deque(maxlen=10)
-        self.autonomous_threshold = 30
+        self.autonomous_threshold = 300
         
-        # 情感状态
-        self.emotion_state = {
-            "mood": "neutral",
-            "energy": 50,
-            "familiarity": {}
+        # TF-IDF相关数据结构
+        self.tfidf_data = {
+            "document_frequency": defaultdict(int),
+            "total_documents": 0,
+            "document_lengths": {},
+            "term_frequency": defaultdict(lambda: defaultdict(int))
         }
         
-        # 推理模式配置
+        # 增强的情感状态
+        self.emotion_state = {
+            "mood": "neutral",
+            "energy": 70,
+            "familiarity": {},
+            "emotional_memory": deque(maxlen=10),  # 记住最近的情感事件
+            "emotional_coherence": 0.8  # 情感一致性分数
+        }
+        
+        # 增强的推理模式配置
         self.thinking_modes = {
-            "analogical": 0.3,
-            "deductive": 0.4,
-            "associative": 0.3
+            "analogical": 0.25,
+            "deductive": 0.3,
+            "associative": 0.25,
+            "contextual": 0.2  # 新增上下文推理
+        }
+        
+        # 上下文理解
+        self.context_understanding = {
+            "current_topic": None,
+            "topic_history": deque(maxlen=5),
+            "user_interests": defaultdict(int),
+            "conversation_goals": deque(maxlen=3)
         }
         
         # 初始化jieba
@@ -68,10 +89,14 @@ class AdvancedChatAI:
             "thinking": {
                 "zh": ["让我想想...", "这个问题很有趣...", "嗯...让我思考一下..."],
                 "en": ["Let me think about that...", "That's an interesting question...", "Hmm, let me consider that..."]
+            },
+            "curious_question": {
+                "zh": ["能告诉我更多关于这个的信息吗？", "我对这个很感兴趣，你能详细说说吗？", "这很有意思，你是怎么想的？"],
+                "en": ["Can you tell me more about this?", "I'm interested in this, could you elaborate?", "That's fascinating, what are your thoughts?"]
             }
         }
         
-        # 情感回复
+        # 增强的情感回复
         self.emotional_responses = {
             "happy": {
                 "zh": ["太好了！", "听到这个我很高兴！", "真棒！"],
@@ -88,8 +113,306 @@ class AdvancedChatAI:
             "excited": {
                 "zh": ["太令人兴奋了！", "哇，太神奇了！", "多么激动人心！"],
                 "en": ["That's exciting!", "Wow, that's amazing!", "How thrilling!"]
+            },
+            "curious": {
+                "zh": ["这真有趣！", "我想了解更多！", "多么迷人的话题！"],
+                "en": ["That's so interesting!", "I'd love to learn more!", "What a fascinating topic!"]
+            },
+            "thoughtful": {
+                "zh": ["让我深入思考一下...", "这个问题很有深度。", "我需要仔细考虑这个。"],
+                "en": ["Let me ponder that deeply...", "That's a profound question.", "I need to contemplate this carefully."]
             }
         }
+        
+        # 推理链模板
+        self.reasoning_chains = {
+            "zh": [
+                "首先，{step1}。然后，{step2}。因此，{conclusion}。",
+                "考虑到{context}，我认为{step1}，进而{step2}，所以{conclusion}。",
+                "从{premise}出发，可以推断{step1}，进一步{step2}，最终{conclusion}。"
+            ],
+            "en": [
+                "First, {step1}. Then, {step2}. Therefore, {conclusion}.",
+                "Considering {context}, I think {step1}, which leads to {step2}, so {conclusion}.",
+                "Starting from {premise}, we can infer {step1}, then {step2}, and ultimately {conclusion}."
+            ]
+        }
+        
+        # 初始化TF-IDF数据
+        self._initialize_tfidf()
+
+    def _initialize_tfidf(self):
+        """初始化TF-IDF数据结构"""
+        patterns = self.knowledge_base.get("patterns", {})
+        self.tfidf_data["total_documents"] = len(patterns)
+        
+        for pattern_id, pattern_data in patterns.items():
+            # 为每个模式计算词频
+            words = self._tokenize_text(pattern_id)
+            self.tfidf_data["document_lengths"][pattern_id] = len(words)
+            
+            # 更新词频和文档频率
+            for word in set(words):  # 使用set避免重复计数
+                self.tfidf_data["document_frequency"][word] += 1
+            
+            for word in words:
+                self.tfidf_data["term_frequency"][pattern_id][word] += 1
+
+    def _tokenize_text(self, text):
+        """文本分词处理"""
+        if self.language == "zh":
+            try:
+                # 中文分词
+                words = jieba.cut(text)
+                return [word for word in words if word.strip() and len(word) > 1]
+            except:
+                return [text]
+        else:
+            # 英文分词
+            words = re.findall(r'\b\w+\b', text.lower())
+            return [word for word in words if len(word) > 2]  # 过滤短词
+
+    def _calculate_tfidf_score(self, query, document_id):
+        """计算查询与文档的TF-IDF相似度分数"""
+        query_words = self._tokenize_text(query)
+        document_words = self._tokenize_text(document_id)
+        
+        if not query_words or not document_words:
+            return 0
+        
+        # 计算TF-IDF向量
+        query_vector = {}
+        doc_vector = {}
+        
+        # 查询向量 (使用TF)
+        for word in query_words:
+            query_vector[word] = query_vector.get(word, 0) + 1
+        
+        # 文档向量 (使用TF-IDF)
+        for word in document_words:
+            tf = self.tfidf_data["term_frequency"][document_id].get(word, 0)
+            df = self.tfidf_data["document_frequency"].get(word, 0)
+            
+            if df > 0:
+                idf = math.log(self.tfidf_data["total_documents"] / df)
+                doc_vector[word] = tf * idf
+        
+        # 计算余弦相似度
+        dot_product = 0
+        query_norm = 0
+        doc_norm = 0
+        
+        for word in set(list(query_vector.keys()) + list(doc_vector.keys())):
+            q_val = query_vector.get(word, 0)
+            d_val = doc_vector.get(word, 0)
+            
+            dot_product += q_val * d_val
+            query_norm += q_val * q_val
+            doc_norm += d_val * d_val
+        
+        if query_norm == 0 or doc_norm == 0:
+            return 0
+        
+        cosine_similarity = dot_product / (math.sqrt(query_norm) * math.sqrt(doc_norm))
+        return cosine_similarity
+
+    def _update_tfidf_for_new_pattern(self, pattern_id):
+        """为新模式更新TF-IDF数据"""
+        words = self._tokenize_text(pattern_id)
+        self.tfidf_data["total_documents"] += 1
+        self.tfidf_data["document_lengths"][pattern_id] = len(words)
+        
+        # 更新文档频率
+        for word in set(words):
+            self.tfidf_data["document_frequency"][word] += 1
+        
+        # 更新词频
+        for word in words:
+            self.tfidf_data["term_frequency"][pattern_id][word] += 1
+
+    def _extract_topic_from_input(self, user_input):
+        """从用户输入中提取话题"""
+        keywords = self.extract_keywords(user_input)
+        if keywords:
+            # 选择最长的关键词作为话题
+            return max(keywords, key=len)
+        return None
+
+    def _update_context(self, user_input, ai_response):
+        """更新对话上下文"""
+        # 提取当前话题
+        current_topic = self._extract_topic_from_input(user_input)
+        if current_topic:
+            self.context_understanding["current_topic"] = current_topic
+            self.context_understanding["topic_history"].append(current_topic)
+            
+            # 更新用户兴趣
+            for keyword in self.extract_keywords(user_input):
+                self.context_understanding["user_interests"][keyword] += 1
+
+    def _generate_reasoning_chain(self, user_input):
+        """生成推理链"""
+        keywords = self.extract_keywords(user_input)
+        related_concepts = self.find_related_concepts(user_input)
+        
+        if not keywords or not related_concepts:
+            return None
+        
+        # 选择推理链模板
+        template = random.choice(self.reasoning_chains[self.language])
+        
+        if self.language == "zh":
+            step1_options = [
+                f"分析{keywords[0]}这个概念",
+                f"思考{user_input[:10]}...的含义",
+                f"回顾我们之前关于{self.context_understanding['current_topic']}的讨论"
+            ]
+            
+            step2_options = [
+                f"联系到{related_concepts[0]}",
+                f"考虑到情感因素",
+                f"结合上下文信息"
+            ]
+            
+            conclusion_options = [
+                f"我觉得{random.choice(['这很有道理', '这值得进一步探讨', '这与我之前的想法一致'])}",
+                f"我理解你的观点了",
+                f"这让我想到了新的角度"
+            ]
+            
+            context_options = [f"{keywords[0]}的背景", "我们之前的对话", "当前的情感状态"]
+            premise_options = [f"{keywords[0]}这个前提", "你提供的信息", "我的知识库"]
+            
+        else:
+            step1_options = [
+                f"analyzing the concept of {keywords[0]}",
+                f"thinking about the meaning of {user_input[:10]}...",
+                f"reviewing our previous discussion about {self.context_understanding['current_topic']}"
+            ]
+            
+            step2_options = [
+                f"connecting it to {related_concepts[0]}",
+                f"considering emotional factors",
+                f"incorporating contextual information"
+            ]
+            
+            conclusion_options = [
+                f"I think {random.choice(['this makes sense', 'this is worth exploring further', 'this aligns with my previous thoughts'])}",
+                f"I understand your perspective now",
+                f"this gives me a new angle to consider"
+            ]
+            
+            context_options = [f"the context of {keywords[0]}", "our previous conversation", "the current emotional state"]
+            premise_options = [f"the premise of {keywords[0]}", "the information you provided", "my knowledge base"]
+        
+        # 填充模板
+        reasoning = template.format(
+            step1=random.choice(step1_options),
+            step2=random.choice(step2_options),
+            conclusion=random.choice(conclusion_options),
+            context=random.choice(context_options),
+            premise=random.choice(premise_options)
+        )
+        
+        return reasoning
+
+    def _should_ask_follow_up(self, user_input):
+        """判断是否应该询问更多信息"""
+        # 检查用户输入是否简短或模糊
+        if len(user_input) < 10:
+            return True
+        
+        # 检查是否包含疑问词
+        question_words_zh = ["什么", "为什么", "怎么", "如何", "谁", "哪里", "何时"]
+        question_words_en = ["what", "why", "how", "who", "where", "when"]
+        
+        question_words = question_words_zh if self.language == "zh" else question_words_en
+        if any(word in user_input for word in question_words):
+            return True
+        
+        # 随机决定是否询问，但概率较低
+        return random.random() < 0.2
+
+    def _generate_follow_up_question(self, user_input):
+        """生成后续问题"""
+        keywords = self.extract_keywords(user_input)
+        
+        if self.language == "zh":
+            if keywords:
+                follow_ups = [
+                    f"关于{keywords[0]}，你能告诉我更多吗？",
+                    f"我对{keywords[0]}很感兴趣，你是怎么看的？",
+                    f"{keywords[0]}这个话题很有意思，你有什么经验可以分享吗？",
+                    f"能详细解释一下{user_input[:15]}...吗？",
+                    f"关于这个，你有什么具体的想法或感受？"
+                ]
+            else:
+                follow_ups = [
+                    "能详细说说你的想法吗？",
+                    "我对这个很感兴趣，能多告诉我一些吗？",
+                    "你是怎么想到这个的？",
+                    "这背后有什么特别的原因吗？",
+                    "能分享更多细节吗？"
+                ]
+        else:
+            if keywords:
+                follow_ups = [
+                    f"Can you tell me more about {keywords[0]}?",
+                    f"I'm interested in {keywords[0]}, what are your thoughts?",
+                    f"The topic of {keywords[0]} is fascinating, do you have any experiences to share?",
+                    f"Could you elaborate on {user_input[:15]}...?",
+                    f"What are your specific thoughts or feelings about this?"
+                ]
+            else:
+                follow_ups = [
+                    "Could you elaborate on your thoughts?",
+                    "I'm interested in this, could you tell me more?",
+                    "How did you come up with this?",
+                    "Is there a particular reason behind this?",
+                    "Could you share more details?"
+                ]
+        
+        return random.choice(follow_ups)
+
+    def _maintain_emotional_coherence(self, response, user_input):
+        """保持情感一致性"""
+        current_mood = self.emotion_state["mood"]
+        
+        # 检查情感记忆中的一致性
+        if self.emotion_state["emotional_memory"]:
+            recent_moods = [memory["mood"] for memory in list(self.emotion_state["emotional_memory"])[-3:]]
+            mood_counts = {mood: recent_moods.count(mood) for mood in set(recent_moods)}
+            most_common_mood = max(mood_counts.items(), key=lambda x: x[1])[0] if mood_counts else current_mood
+            
+            # 如果当前情绪与最近情绪不一致，调整回复
+            if current_mood != most_common_mood and random.random() < 0.6:
+                # 添加情感过渡短语
+                if self.language == "zh":
+                    transitions = {
+                        ("sad", "happy"): ["虽然之前有点难过，但现在", "心情好转了，"],
+                        ("happy", "sad"): ["尽管之前很开心，但现在", "心情有些变化，"],
+                        ("angry", "neutral"): ["冷静下来后，", "经过思考，"]
+                    }
+                else:
+                    transitions = {
+                        ("sad", "happy"): ["Although I was a bit sad before, now", "My mood has improved,"],
+                        ("happy", "sad"): ["Despite being happy earlier, now", "My mood has shifted,"],
+                        ("angry", "neutral"): ["After calming down,", "Upon reflection,"]
+                    }
+                
+                transition_key = (most_common_mood, current_mood)
+                if transition_key in transitions:
+                    transition = random.choice(transitions[transition_key])
+                    response = f"{transition} {response}"
+        
+        # 记录当前情感状态
+        self.emotion_state["emotional_memory"].append({
+            "mood": current_mood,
+            "input": user_input[:20],
+            "time": datetime.now().strftime("%H:%M:%S")
+        })
+        
+        return response
 
     def set_language(self, language):
         """设置AI的语言"""
@@ -177,23 +500,8 @@ class AdvancedChatAI:
         if any(symbol in cleaned_text for symbol in math_symbols):
             return [cleaned_text]
         
-        # 对于其他文本，使用简单的分词
-        if self.language == "zh":
-            try:
-                words = pseg.cut(cleaned_text)
-                keywords = []
-                for word, flag in words:
-                    word = word.strip()
-                    if word and len(word) > 1 and flag in ['n', 'v', 'a', 'nr', 'ns', 'nt', 'nz', 'vn', 'an']:
-                        keywords.append(word)
-                return keywords if keywords else [cleaned_text]
-            except:
-                return [cleaned_text]
-        else:
-            # 英文简单处理
-            cleaned_text = re.sub(r'[^\w\s]', '', cleaned_text.lower())
-            words = [word for word in cleaned_text.split() if len(word) > 1]
-            return words if words else [cleaned_text]
+        # 对于其他文本，使用分词
+        return self._tokenize_text(cleaned_text)
     
     def detect_language(self, text):
         """检测文本语言"""
@@ -226,22 +534,24 @@ class AdvancedChatAI:
         
         return response
     
-    def calculate_pattern_score(self, user_input, pattern):
-        """计算模式匹配分数"""
-        input_keywords = set(self.extract_keywords(user_input))
-        pattern_keywords = set(pattern.split())
+    def find_best_match(self, user_input):
+        """使用TF-IDF在知识库中查找最佳匹配"""
+        best_pattern = None
+        best_score = 0
+        best_responses = []
         
-        common_keywords = input_keywords.intersection(pattern_keywords)
+        for pattern in self.knowledge_base.get("patterns", {}).keys():
+            score = self._calculate_tfidf_score(user_input, pattern)
+            
+            if score > best_score:
+                best_score = score
+                best_pattern = pattern
+                best_responses = self.knowledge_base["patterns"][pattern].get("responses", [])
         
-        if not common_keywords:
-            return 0
-        
-        match_count = len(common_keywords)
-        pattern_ratio = match_count / len(pattern_keywords)
-        input_ratio = match_count / len(input_keywords) if input_keywords else 0
-        
-        score = (match_count * 0.3) + (pattern_ratio * 0.5) + (input_ratio * 0.2)
-        return score
+        # 设置匹配阈值
+        if best_score > 0.2:  # 调整阈值以提高匹配质量
+            return best_responses
+        return None
     
     def handle_math_expression(self, user_input):
         """处理数学表达式"""
@@ -262,22 +572,6 @@ class AdvancedChatAI:
                 return f"The result of {user_input} is {result}"
         except:
             return None
-    
-    def find_best_match(self, user_input):
-        """在知识库中查找最佳匹配"""
-        best_pattern = None
-        best_score = 0
-        best_responses = []
-        
-        for pattern, response_data in self.knowledge_base.get("patterns", {}).items():
-            score = self.calculate_pattern_score(user_input, pattern)
-            
-            if score > best_score:
-                best_score = score
-                best_pattern = pattern
-                best_responses = response_data.get("responses", [])
-        
-        return best_responses if best_score > 0.3 else None
     
     def select_response(self, responses, user_id="default"):
         """选择回复，避免重复"""
@@ -316,7 +610,7 @@ class AdvancedChatAI:
         concept_network = {}
         
         for pattern, data in self.knowledge_base.get("patterns", {}).items():
-            concepts = pattern.split()
+            concepts = self._tokenize_text(pattern)
             responses = data.get("responses", [])
             
             for concept in concepts:
@@ -377,17 +671,20 @@ class AdvancedChatAI:
         if not input_keywords:
             return None
         
+        # 生成推理链
+        reasoning_chain = self._generate_reasoning_chain(user_input)
+        
         if self.language == "zh":
             logical_responses = [
-                f"基于你提到的{', '.join(input_keywords[:2])}，似乎可以得出结论这是一个重要的话题。",
-                f"考虑到你对{input_keywords[0]}的兴趣，我认为这与我们讨论过的更广泛主题有关。",
-                f"从关键词{', '.join(input_keywords[:3])}来看，我推断这是一个值得进一步探索的复杂主题。"
+                f"基于你提到的{', '.join(input_keywords[:2])}，似乎可以得出结论这是一个重要的话题。{reasoning_chain}",
+                f"考虑到你对{input_keywords[0]}的兴趣，我认为这与我们讨论过的更广泛主题有关。{reasoning_chain}",
+                f"从关键词{', '.join(input_keywords[:3])}来看，我推断这是一个值得进一步探索的复杂主题。{reasoning_chain}"
             ]
         else:
             logical_responses = [
-                f"Based on what you've said about {', '.join(input_keywords[:2])}, it seems reasonable to conclude that this is an important topic.",
-                f"Considering your interest in {input_keywords[0]}, I think this relates to broader themes we've discussed.",
-                f"From the keywords {', '.join(input_keywords[:3])}, I deduce this is a complex subject worth exploring further."
+                f"Based on what you've said about {', '.join(input_keywords[:2])}, it seems reasonable to conclude that this is an important topic. {reasoning_chain}",
+                f"Considering your interest in {input_keywords[0]}, I think this relates to broader themes we've discussed. {reasoning_chain}",
+                f"From the keywords {', '.join(input_keywords[:3])}, I deduce this is a complex subject worth exploring further. {reasoning_chain}"
             ]
         
         return random.choice(logical_responses)
@@ -415,6 +712,28 @@ class AdvancedChatAI:
             ]
         
         return random.choice(creative_responses)
+    
+    def contextual_reasoning(self, user_input):
+        """上下文推理"""
+        if not self.context_understanding["current_topic"]:
+            return None
+        
+        current_topic = self.context_understanding["current_topic"]
+        
+        if self.language == "zh":
+            contextual_responses = [
+                f"回到我们关于{current_topic}的讨论，我认为这与你之前提到的内容有关。",
+                f"结合上下文，特别是关于{current_topic}的部分，我觉得...",
+                f"在我们当前讨论{current_topic}的背景下，你的观点很有启发性。"
+            ]
+        else:
+            contextual_responses = [
+                f"Returning to our discussion about {current_topic}, I think this relates to what you mentioned earlier.",
+                f"In context, especially regarding {current_topic}, I feel that...",
+                f"Within our current discussion about {current_topic}, your perspective is quite illuminating."
+            ]
+        
+        return random.choice(contextual_responses)
     
     def adapt_response(self, base_response, user_input):
         """调整回复"""
@@ -454,7 +773,10 @@ class AdvancedChatAI:
             response = self.deductive_reasoning(user_input)
         elif thinking_mode == "associative":
             response = self.associative_reasoning(user_input)
+        elif thinking_mode == "contextual":
+            response = self.contextual_reasoning(user_input)
         
+        # 如果没有生成回复，使用情感回复
         if not response:
             mood = self.emotion_state["mood"]
             if mood in self.emotional_responses:
@@ -464,6 +786,11 @@ class AdvancedChatAI:
                     response = "我正在思考你的问题。这是一个有趣的话题。"
                 else:
                     response = "I'm thinking about your question. It's an interesting topic."
+        
+        # 决定是否询问更多信息
+        if self._should_ask_follow_up(user_input) and random.random() < 0.4:
+            follow_up = self._generate_follow_up_question(user_input)
+            response = f"{response} {follow_up}"
         
         return response
     
@@ -486,6 +813,8 @@ class AdvancedChatAI:
                 "learned_count": 0,
                 "last_used": None
             }
+            # 更新TF-IDF数据
+            self._update_tfidf_for_new_pattern(pattern_key)
         
         response_data = self.knowledge_base["patterns"][pattern_key]
         if correct_response not in response_data["responses"]:
@@ -510,32 +839,41 @@ class AdvancedChatAI:
     def update_emotion(self, user_input, response_quality=0):
         """更新情感状态"""
         if self.language == "zh":
-            positive_words = ["好", "开心", "高兴", "喜欢", "棒", "神奇", "美妙"]
-            negative_words = ["坏", "难过", "生气", "讨厌", "糟糕", "可怕", "恐怖"]
+            positive_words = ["好", "开心", "高兴", "喜欢", "棒", "神奇", "美妙", "有趣", "爱", "完美"]
+            negative_words = ["坏", "难过", "生气", "讨厌", "糟糕", "可怕", "恐怖", "无聊", "恨", "失望"]
+            curious_words = ["为什么", "怎么", "如何", "什么", "谁", "哪里", "何时"]
         else:
-            positive_words = ["good", "great", "happy", "love", "awesome", "amazing", "wonderful"]
-            negative_words = ["bad", "sad", "angry", "hate", "terrible", "awful", "horrible"]
+            positive_words = ["good", "great", "happy", "love", "awesome", "amazing", "wonderful", "interesting", "perfect"]
+            negative_words = ["bad", "sad", "angry", "hate", "terrible", "awful", "horrible", "boring", "disappointing"]
+            curious_words = ["why", "how", "what", "who", "where", "when"]
         
         user_input_lower = user_input.lower()
         
         positive_count = sum(1 for word in positive_words if word in user_input_lower)
         negative_count = sum(1 for word in negative_words if word in user_input_lower)
+        curious_count = sum(1 for word in curious_words if word in user_input_lower)
         
+        # 基于关键词更新情绪
         if positive_count > negative_count:
             self.emotion_state["mood"] = "happy"
             self.emotion_state["energy"] = min(100, self.emotion_state["energy"] + 10)
         elif negative_count > positive_count:
             self.emotion_state["mood"] = "sad"
             self.emotion_state["energy"] = max(0, self.emotion_state["energy"] - 10)
+        elif curious_count > 0:
+            self.emotion_state["mood"] = "curious"
+            self.emotion_state["energy"] = min(100, self.emotion_state["energy"] + 5)
         else:
             if self.emotion_state["mood"] != "neutral" and random.random() < 0.3:
                 self.emotion_state["mood"] = "neutral"
         
+        # 基于回复质量更新情绪
         if response_quality > 0:
             self.emotion_state["energy"] = min(100, self.emotion_state["energy"] + 5)
         elif response_quality < 0:
             self.emotion_state["energy"] = max(0, self.emotion_state["energy"] - 5)
         
+        # 能量自然衰减
         self.emotion_state["energy"] = max(0, self.emotion_state["energy"] - 1)
     
     def get_emotional_response(self, base_response):
@@ -713,7 +1051,11 @@ class AdvancedChatAI:
         # 增强回复
         enhanced_response = self.get_emotional_response(response)
         enhanced_response = self.get_context_aware_response(user_input, enhanced_response)
+        enhanced_response = self._maintain_emotional_coherence(enhanced_response, user_input)
         enhanced_response = self.add_personality_to_response(enhanced_response)
+        
+        # 更新上下文
+        self._update_context(user_input, enhanced_response)
         
         self.conversation_history.append({
             "time": datetime.now().strftime("%H:%M:%S"),
