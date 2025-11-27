@@ -1885,11 +1885,11 @@ class SerlinTransformer:
             ]
         }
         
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(template, f, ensure_ascii=False, indent=2)
+       # with open(file_path, 'w', encoding='utf-8') as f:
+         #   json.dump(template, f, ensure_ascii=False, indent=2)
         
-        print(f"Training data template created: {file_path}")
-        return file_path
+       # print(f"Training data template created: {file_path}")
+        return template
 
     def batch_train_from_json(self, file_path):
         """Batch train from JSON file"""
