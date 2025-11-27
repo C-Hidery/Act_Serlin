@@ -189,10 +189,10 @@ class SerlinClient:
         })
         return response
     
-    def create_training_template(self):
+    def create_training_template(self, fn= f"training_example_{datetime.datetime}.json"):
         """Create training template on server"""
         response = self.send_and_recv('create_training_template')
-        fn = f"training_example_{datetime.datetime}.json"
+      #  fn = f"training_example_{datetime.datetime}.json"
         with open(fn,'w',encoding='utf-8') as f:
             json.dump(response.get('data'), f, ensure_ascii=False, indent=2)
         print(f"Training data template created: {fn}")
@@ -372,7 +372,7 @@ def show_training_options(client):
         file_name = input("Please enter template file name (default training_template.json): ").strip() or "training_template.json"
         result = client.create_training_template(file_name)
         if result:
-            print(f"Template created: {result.get('data', {}).get('file_path')}")
+            print(f"Template created: {result.get('data', {})}")
         else:
             print(f"Error creating template: {result.get('message')}")
     elif choice == '4':
@@ -580,7 +580,7 @@ def main():
                 file_name = input("Please enter template file name (default training_template.json): ").strip() or "training_template.json"
                 result = client.create_training_template(file_name)
                 if result:
-                    print(f"Template created: {result.get('data', {}).get('file_path')}")
+                    print(f"Template created: {result.get('data', {})}")
                 else:
                     print(f"Error creating template: {result.get('message')}")
                 continue
