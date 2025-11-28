@@ -7,6 +7,7 @@ import json
 import threading
 import datetime
 import math
+
 # Import Serlin modules
 from Module.Serlin_Transformer import *
 
@@ -205,72 +206,92 @@ class SerlinServer:
                 
         except Exception as e:
             return {"status": "error", "message": f"Error handling request: {str(e)}"}
-    
+    def send_rep(self,client_socket,data=None):
+        try:
+            # Send response
+            response_json = json.dumps(data).encode('utf-8')
+            response_length = len(response_json)
+                
+                    #  ȷ     Ӧ    
+            client_socket.send(response_length.to_bytes(4, byteorder='big'))
+                    #  ٷ     Ӧ    
+            bytes_sent = 0
+            while bytes_sent < response_length:
+                sent = client_socket.send(response_json[bytes_sent:bytes_sent+4096])
+                if sent == 0:
+                    break
+                bytes_sent += sent
+                
+            print(f"Response sent ({bytes_sent}/{response_length} bytes)")
+                
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            error_response = {
+                "status": "error",
+                "message": "Invalid JSON format"
+            }
+            error_json = json.dumps(error_response).encode('utf-8')
+            error_length = len(error_json)
+            client_socket.send(error_length.to_bytes(4, byteorder='big'))
+            client_socket.send(error_json)
+        except Exception as e:
+            print(f"Error Sending response: {e}")
+    def recv_req(self,client_socket):
+        try:
+            #  Ƚ      ݳ   
+            length_data = client_socket.recv(4)
+            if not length_data:
+                return None
+        
+            request_length = int.from_bytes(length_data, byteorder='big')
+            print(f"Expecting request of {request_length} bytes")
+        
+            #             
+            request_data = b""
+            bytes_received = 0
+        
+            while bytes_received < request_length:
+                chunk = client_socket.recv(min(4096, request_length - bytes_received))
+                if not chunk:
+                    break
+                request_data += chunk
+                bytes_received += len(chunk)
+                print(f"Received {bytes_received}/{request_length} bytes")
+        
+            if bytes_received < request_length:
+                print(f"Incomplete request: {bytes_received}/{request_length} bytes")
+                return None
+        
+            try:
+                # Parse JSON request
+                request_data_json = request_data.decode('utf-8')
+                request_data_obj = json.loads(request_data_json)
+                print(f"Received request: {request_data_obj.get('command', 'unknown')}")
+                return request_data_obj
+            
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                return None
+        except Exception as e:
+            print(f"Error receiving request: {e}")
+            return None
     def handle_client(self, client_socket, address):
         """Handle individual client connection"""
         print(f"Connection from {address}")
     
         try:
             while True:
-                #  Ƚ      ݳ   
-                length_data = client_socket.recv(4)
-                if not length_data:
+                request_data_obj = self.recv_req(client_socket)
+                if not request_data_obj:
+                    #print(f"No valid request data from {address}, closing connection.")
                     break
-            
-                request_length = int.from_bytes(length_data, byteorder='big')
-                print(f"Expecting request of {request_length} bytes")
-            
-                #             
-                request_data = b""
-                bytes_received = 0
-            
-                while bytes_received < request_length:
-                    chunk = client_socket.recv(min(4096, request_length - bytes_received))
-                    if not chunk:
-                        break
-                    request_data += chunk
-                    bytes_received += len(chunk)
-                    print(f"Received {bytes_received}/{request_length} bytes")
-            
-                if bytes_received < request_length:
-                    print(f"Incomplete request: {bytes_received}/{request_length} bytes")
-                    break
-            
-                try:
-                    # Parse JSON request
-                    request_data_json = request_data.decode('utf-8')
-                    request_data_obj = json.loads(request_data_json)
-                    print(f"Received request: {request_data_obj.get('command', 'unknown')}")
+                print(f"Received request: {request_data_obj.get('command', 'unknown')}")
+                # Process request
+                response = self.handle_request(request_data_obj)
                 
-                    # Process request
-                    response = self.handle_request(request_data_obj)
+                self.send_rep(client_socket,response)
                 
-                    # Send response
-                    response_json = json.dumps(response).encode('utf-8')
-                    response_length = len(response_json)
-                
-                    #  ȷ     Ӧ    
-                    client_socket.send(response_length.to_bytes(4, byteorder='big'))
-                    #  ٷ     Ӧ    
-                    bytes_sent = 0
-                    while bytes_sent < response_length:
-                        sent = client_socket.send(response_json[bytes_sent:bytes_sent+4096])
-                        if sent == 0:
-                            break
-                        bytes_sent += sent
-                
-                    print(f"Response sent ({bytes_sent}/{response_length} bytes)")
-                
-                except json.JSONDecodeError as e:
-                    print(f"JSON decode error: {e}")
-                    error_response = {
-                        "status": "error",
-                        "message": "Invalid JSON format"
-                    }
-                    error_json = json.dumps(error_response).encode('utf-8')
-                    error_length = len(error_json)
-                    client_socket.send(error_length.to_bytes(4, byteorder='big'))
-                    client_socket.send(error_json)
+               
                 
         except Exception as e:
             print(f"Error handling client {address}: {e}")
