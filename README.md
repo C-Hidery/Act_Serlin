@@ -1,6 +1,6 @@
 # Act_Serlin
 
-ChatBot by PyTorch
+ChatBot powered by PyTorch
 
 Run `Act_Server.py` first
 
