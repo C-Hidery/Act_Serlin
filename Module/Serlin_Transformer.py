@@ -1863,7 +1863,7 @@ class SerlinTransformer:
         self.sync_model_vocab()
         return {"status": "success", "message": "Model vocabulary synchronized"}
 
-    def create_training_template(self, file_path="training_template.json"):
+    def create_training_template(self):
         """Create training data template"""
         template = {
             "description": "Serlin training data template",
@@ -1885,17 +1885,17 @@ class SerlinTransformer:
             ]
         }
         
-       # with open(file_path, 'w', encoding='utf-8') as f:
-         #   json.dump(template, f, ensure_ascii=False, indent=2)
+        #with open(file_path, 'w', encoding='utf-8') as f:
+        #   json.dump(template, f, ensure_ascii=False, indent=2)
         
-       # print(f"Training data template created: {file_path}")
+        #print(f"Training data template created: {file_path}")
         return template
 
     def batch_train_from_json(self, file_path):
         """Batch train from JSON file"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                training_data = json.load(f)
+            
+            training_data = file_path
             
             # Support multiple JSON formats
             if isinstance(training_data, list):
@@ -1919,8 +1919,6 @@ class SerlinTransformer:
             else:
                 return {"status": "error", "message": "No valid training data found in JSON file"}
             
-        except FileNotFoundError:
-            return {"status": "error", "message": f"File {file_path} does not exist"}
         except json.JSONDecodeError:
             return {"status": "error", "message": f"JSON file format error: {file_path}"}
         except Exception as e:
