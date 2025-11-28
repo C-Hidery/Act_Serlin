@@ -1897,10 +1897,10 @@ class SerlinTransformer:
             # For other non-serializable types, convert to string
             return str(obj)
 
-    def export_conversation(self, filename=None):
+    def export_conversation(self):
         """Fixed export conversation history method"""
-        if filename is None:
-            filename = f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        #if filename is None:
+         #   filename = f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     
         # Convert Tensor objects in conversation history
         serializable_history = self._convert_tensors_to_serializable(self.conversation_history)
@@ -1910,15 +1910,7 @@ class SerlinTransformer:
             'conversations': serializable_history
         }
     
-        try:
-            with open(filename, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, ensure_ascii=False, indent=2)
-        
-            print(f"Conversation exported to: {filename}")
-            return filename
-        except Exception as e:
-            print(f"Export failed: {e}")
-            return None
+        return export_data
 
     def reset_model(self):
         """Reset model to initial state"""
