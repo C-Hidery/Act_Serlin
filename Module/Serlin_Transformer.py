@@ -1707,7 +1707,6 @@ class SerlinTransformer:
             
                 if epoch % 5 == 0:
                     print(f'Epoch {epoch:3d}, Loss: {loss:.4f}, LR: {self.trainer.scheduler.get_last_lr()[0]:.6f}')
-            
                 # Early stopping check
                 if early_stopping:
                     if epoch % 5 == 0:
