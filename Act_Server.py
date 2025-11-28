@@ -163,12 +163,11 @@ class SerlinServer:
                 return result
                 
             elif command == 'export_conversation':
-                filename = data.get('filename')
-                result = self.serlin.export_conversation(filename)
+                result = self.serlin.export_conversation()
                 return {
                     "status": "success" if result else "error",
                     "message": "Conversation exported" if result else "Export failed",
-                    "data": {"filename": result}
+                    "data": result
                 }
                 
             elif command == 'load_model':

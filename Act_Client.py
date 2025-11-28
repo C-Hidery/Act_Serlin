@@ -168,11 +168,12 @@ class SerlinClient:
         response = self.send_and_recv('reset_model')
         return response
     
-    def export_conversation(self, filename=None):
+    def export_conversation(self, fn=f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"):
         """Export conversation from server"""
-        response = self.send_and_recv('export_conversation', {
-            'filename': filename
-        })
+        response = self.send_and_recv('export_conversation')
+        with open(fn,'w',encoding='utf-8') as f:
+            json.dump(response.get('data'), f, ensure_ascii=False, indent=2)
+        print(f"Training data template created: {fn}")
         return response
     
     def load_model(self, path=None):
@@ -428,14 +429,15 @@ def main():
                 
             if user_input.lower() in ['exit', 'quit']:
                 # Show summary before exiting
+                fn = f"conversation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 summary_result = client.get_conversation_summary()
                 if summary_result:
                     print(f"\n{summary_result.get('data', {}).get('summary', 'No summary available')}")
                 export_choice = input("Export conversation history? (y/N): ").strip().lower()
                 if export_choice == 'y':
-                    export_result = client.export_conversation()
+                    export_result = client.export_conversation(fn)
                     if export_result:
-                        print(f"Conversation exported to: {export_result.get('data', {}).get('filename')}")
+                        print(f"Conversation exported to: {fn}")
                     else:
                         print(f"Export failed: {export_result.get('message')}")
                 print("Thank you for using Serlin, goodbye!")
