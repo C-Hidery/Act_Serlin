@@ -446,68 +446,217 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:, :seq_len, :]
 
 class TransformerThinkingLayer(nn.Module):
-    """Transformer Thinking Layer - adapted for batch_first"""
+    """Enhanced Transformer Thinking Layer with sophisticated reasoning mechanism"""
     
     def __init__(self, d_model, nhead, num_layers, think_steps=serlin_config.think_steps):
         super(TransformerThinkingLayer, self).__init__()
         self.d_model = d_model
         self.think_steps = think_steps
         
-        # Thinking Transformer layer - set batch_first=True
-        self.thinking_transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=d_model, 
-                nhead=nhead,
-                batch_first=True  # Add this parameter
-            ),
-            num_layers=num_layers
+        # Multi-head reasoning transformers for different thinking aspects
+        self.reasoning_transformers = nn.ModuleList([
+            nn.TransformerEncoder(
+                nn.TransformerEncoderLayer(
+                    d_model=d_model, 
+                    nhead=nhead,
+                    batch_first=True
+                ),
+                num_layers=num_layers
+            ) for _ in range(think_steps)
+        ])
+        
+        # Attention mechanisms for different information sources
+        self.knowledge_attention = nn.MultiheadAttention(
+            embed_dim=d_model, 
+            num_heads=max(1, nhead//2), 
+            batch_first=True
+        )
+        self.memory_attention = nn.MultiheadAttention(
+            embed_dim=d_model, 
+            num_heads=max(1, nhead//2), 
+            batch_first=True
         )
         
-        # Thought fusion layer
-        self.thought_fusion = nn.Linear(d_model * think_steps, d_model)
+        # Reasoning state controllers
+        self.reasoning_gates = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model * 3, d_model),
+                nn.Sigmoid()
+            ) for _ in range(think_steps)
+        ])
+        
+        # Intermediate thought processors
+        self.thought_refiners = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, d_model * 2),
+                nn.GELU(),
+                nn.Linear(d_model * 2, d_model),
+                nn.LayerNorm(d_model)
+            ) for _ in range(think_steps)
+        ])
+        
+        # Thought fusion layer with residual connections
+        self.thought_fusion = nn.Sequential(
+            nn.Linear(d_model * 2, d_model * 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model)
+        )
+        
+        # Confidence scoring for each reasoning step
+        self.confidence_scorers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(d_model, d_model // 2),
+                nn.GELU(),
+                nn.Linear(d_model // 2, 1),
+                nn.Sigmoid()
+            ) for _ in range(think_steps)
+        ])
+        
+        # Reasoning trajectory tracking
+        self.trajectory_encoder = nn.GRU(
+            input_size=d_model,
+            hidden_size=d_model,
+            num_layers=1,
+            batch_first=True
+        )
         
         # Layer normalization
         self.layer_norm = nn.LayerNorm(d_model)
+        
+        # Thinking process monitoring
+        self.thinking_monitor = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, think_steps),
+            nn.Softmax(dim=-1)
+        )
     
     def forward(self, context, knowledge_vector=None, memory_vector=None):
         # context shape: [batch_size, seq_len, d_model]
         batch_size, seq_len, d_model = context.size()
+        device = context.device
         
-        # Multi-step thinking process
+        # Initialize thinking process
         thoughts = []
+        confidence_scores = []
         current_thought = context
+        reasoning_trajectory = []
         
+        # Multi-step thinking process with enhanced reasoning
         for step in range(self.think_steps):
-            # Apply Transformer thinking
-            thought_output = self.thinking_transformer(current_thought)
+            # Apply specialized reasoning transformer for this step
+            thought_output = self.reasoning_transformers[step](current_thought)
             
-            # Integrate knowledge and memory (if provided)
+            # Enhanced knowledge integration with attention
             if knowledge_vector is not None:
-                # knowledge_vector: [batch_size, d_model]
                 knowledge_expanded = knowledge_vector.unsqueeze(1).expand(-1, seq_len, -1)
-                thought_output = thought_output + knowledge_expanded
+                # Use attention to selectively incorporate knowledge
+                attended_knowledge, _ = self.knowledge_attention(
+                    thought_output, knowledge_expanded, knowledge_expanded
+                )
+            else:
+                attended_knowledge = torch.zeros_like(thought_output)
             
+            # Enhanced memory integration with attention
             if memory_vector is not None:
-                # memory_vector: [batch_size, d_model]
                 memory_expanded = memory_vector.unsqueeze(1).expand(-1, seq_len, -1)
-                thought_output = thought_output + memory_expanded
+                # Use attention to selectively incorporate memory
+                attended_memory, _ = self.memory_attention(
+                    thought_output, memory_expanded, memory_expanded
+                )
+            else:
+                attended_memory = torch.zeros_like(thought_output)
             
-            thoughts.append(thought_output)
-            current_thought = thought_output
+            # Dynamic gating mechanism for information fusion
+            context_mean = thought_output.mean(dim=1, keepdim=True).expand(-1, seq_len, -1)
+            
+            # Ensure all tensors have the same shape before concatenation
+            gate_input = torch.cat([
+                context_mean,  # [batch_size, seq_len, d_model]
+                attended_knowledge,  # [batch_size, seq_len, d_model]  
+                attended_memory  # [batch_size, seq_len, d_model]
+            ], dim=-1)  # Results in [batch_size, seq_len, d_model * 3]
+            
+            reasoning_gate = self.reasoning_gates[step](gate_input)
+            
+            # Fuse information with gating
+            fused_thought = thought_output + reasoning_gate * attended_knowledge + (1 - reasoning_gate) * attended_memory
+            
+            # Refine thought with intermediate processing
+            refined_thought = self.thought_refiners[step](fused_thought)
+            
+            # Calculate confidence score for this reasoning step
+            step_confidence = self.confidence_scorers[step](refined_thought.mean(dim=1))
+            confidence_scores.append(step_confidence)
+            
+            # Store thought and update trajectory
+            thoughts.append(refined_thought)
+            reasoning_trajectory.append(refined_thought.mean(dim=1, keepdim=True))
+            
+            # Prepare for next reasoning step
+            current_thought = refined_thought
         
-        # Fuse all thinking steps
-        if len(thoughts) > 1:
-            # Concatenate along feature dimension
-            thought_cat = torch.cat(thoughts, dim=-1)  # [batch_size, seq_len, d_model * think_steps]
-            final_thought = self.thought_fusion(thought_cat)
+        # Encode reasoning trajectory
+        if reasoning_trajectory:
+            trajectory_input = torch.cat(reasoning_trajectory, dim=1)
+            trajectory_encoded, _ = self.trajectory_encoder(trajectory_input)
+            trajectory_final = trajectory_encoded[:, -1, :].unsqueeze(1).expand(-1, seq_len, -1)
         else:
-            final_thought = thoughts[0]
+            trajectory_final = torch.zeros_like(context)
+        
+        # Hierarchical fusion of all thinking steps - FIXED dimension issues
+        if len(thoughts) > 0:
+            # Fix: Properly handle confidence scores for weighted average
+            if confidence_scores:
+                # Stack confidence scores and apply softmax
+                confidence_stack = torch.stack(confidence_scores, dim=1)  # [batch_size, think_steps, 1]
+                thought_weights = torch.softmax(confidence_stack.squeeze(-1), dim=-1)  # [batch_size, think_steps]
+                
+                # Apply weights to thoughts - FIXED dimension issue
+                weighted_thoughts = []
+                for i, thought in enumerate(thoughts):
+                    # thought shape: [batch_size, seq_len, d_model]
+                    # thought_weights shape: [batch_size, think_steps]
+                    weight = thought_weights[:, i].unsqueeze(-1).unsqueeze(-1)  # [batch_size, 1, 1]
+                    weighted_thought = thought * weight.expand(-1, seq_len, d_model)
+                    weighted_thoughts.append(weighted_thought)
+                
+                # Sum weighted thoughts
+                final_thought_from_thinking = sum(weighted_thoughts)
+            else:
+                # Simple average if no confidence scores
+                final_thought_from_thinking = sum(thoughts) / len(thoughts)
+            
+            # Fuse with original context and trajectory - FIXED dimension issue
+            # Use mean pooling to get global representation
+            thinking_global = final_thought_from_thinking.mean(dim=1, keepdim=True)  # [batch_size, 1, d_model]
+            trajectory_global = trajectory_final.mean(dim=1, keepdim=True)  # [batch_size, 1, d_model]
+            
+            fusion_input = torch.cat([thinking_global, trajectory_global], dim=-1)  # [batch_size, 1, d_model * 2]
+            
+            # Final fusion with residual connection
+            final_thought_global = self.thought_fusion(fusion_input)  # [batch_size, 1, d_model]
+            final_thought = final_thought_global.expand(-1, seq_len, -1) + context  # Residual connection
+        else:
+            final_thought = context
         
         # Layer normalization
         final_thought = self.layer_norm(final_thought)
         
+        # Thinking process monitoring output
+        thinking_weights = self.thinking_monitor(final_thought.mean(dim=1))
+        
+        # Store thinking diagnostics
+        self.thinking_diagnostics = {
+            'confidence_scores': torch.stack(confidence_scores, dim=1) if confidence_scores else None,
+            'thinking_weights': thinking_weights,
+            'reasoning_trajectory': reasoning_trajectory
+        }
+        
         return final_thought  # [batch_size, seq_len, d_model]
-
+    #'reasoning_trajectory': reasoning_trajectory
 class TransformerDialogueAI(nn.Module):
     """Transformer-based Dialogue AI - Fixed batch_first warnings"""
     
@@ -520,12 +669,13 @@ class TransformerDialogueAI(nn.Module):
         self.d_model = d_model
         self.max_length = max_length
         self.idx2word = idx2word
+        self.think_steps = think_steps
         
         # Word embedding layer
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoder = PositionalEncoding(d_model, max_len=max_length)
         
-        # Transformer encoder - set batch_first=True
+        # Transformer encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model, 
             nhead=nhead,
@@ -534,7 +684,7 @@ class TransformerDialogueAI(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_encoder_layers)
         
-        # Transformer thinking layer
+        # Enhanced Transformer thinking layer
         self.thinking_layer = TransformerThinkingLayer(
             d_model=d_model,
             nhead=nhead,
@@ -542,7 +692,15 @@ class TransformerDialogueAI(nn.Module):
             think_steps=think_steps
         )
         
-        # Transformer decoder - set batch_first=True
+        # Context analyzer for thinking guidance
+        self.context_analyzer = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, think_steps * 3),
+            nn.Tanh()
+        )
+        
+        # Transformer decoder
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -554,12 +712,25 @@ class TransformerDialogueAI(nn.Module):
         # Output layer
         self.output_projection = nn.Linear(d_model, vocab_size)
         
-        # Personality adapter
-        self.personality_adapter = nn.Linear(d_model + 5, d_model)
+        # Enhanced personality adapter - FIXED input dimension
+        self.personality_adapter = nn.Sequential(
+            nn.Linear(d_model + 5 + think_steps, d_model * 2),  # Added think_steps dimension
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model),
+            nn.LayerNorm(d_model)
+        )
         
         # Sentiment and topic analysis
         self.sentiment_analysis = nn.Linear(d_model, 3)
         self.topic_analysis = nn.Linear(d_model, 10)
+        
+        # Thinking quality assessment
+        self.thinking_quality = nn.Sequential(
+            nn.Linear(d_model, d_model // 2),
+            nn.GELU(),
+            nn.Linear(d_model // 2, 1),
+            nn.Sigmoid()
+        )
         
         # Initialize parameters
         self.init_weights()
@@ -582,20 +753,48 @@ class TransformerDialogueAI(nn.Module):
         return memory  # [batch_size, seq_len, d_model]
     
     def thinking_process(self, memory, knowledge_vector=None, memory_vector=None, personality_vector=None):
-        """Thinking process"""
-        # memory shape: [batch_size, seq_len, d_model]
+        """Enhanced thinking process with context guidance"""
+        # Analyze context to guide thinking
+        context_analysis = self.context_analyzer(memory.mean(dim=1))
+        context_analysis = context_analysis.view(-1, self.think_steps, 3)
         
-        # Apply thinking layer
+        # Apply enhanced thinking layer
         thought_memory = self.thinking_layer(memory, knowledge_vector, memory_vector)
         
-        # Personality adaptation
+        # Assess thinking quality
+        thinking_quality_score = self.thinking_quality(thought_memory.mean(dim=1))
+        
+        # Enhanced personality adaptation with thinking context
         if personality_vector is not None:
             batch_size, seq_len, d_model = thought_memory.size()
             personality_expanded = personality_vector.unsqueeze(1).expand(-1, seq_len, -1)
-            thought_with_personality = torch.cat([thought_memory, personality_expanded], dim=-1)
-            thought_memory = torch.tanh(self.personality_adapter(thought_with_personality))
+            
+            # Include thinking diagnostics in personality adaptation
+            thinking_context = self.thinking_layer.thinking_diagnostics['thinking_weights']
+            
+            # Fix: Ensure thinking_context has correct shape [batch_size, think_steps]
+            if thinking_context.dim() == 1:
+                thinking_context = thinking_context.unsqueeze(0)
+            
+            thinking_context_expanded = thinking_context.unsqueeze(1).expand(-1, seq_len, -1)
+            
+            # Ensure all dimensions match before concatenation
+            thought_with_personality = torch.cat([
+                thought_memory, 
+                personality_expanded, 
+                thinking_context_expanded
+            ], dim=-1)
+            
+            thought_memory = self.personality_adapter(thought_with_personality)
         
-        return thought_memory  # [batch_size, seq_len, d_model]
+        # Store thinking diagnostics
+        self.thinking_diagnostics = {
+            **self.thinking_layer.thinking_diagnostics,
+            'context_analysis': context_analysis,
+            'thinking_quality': thinking_quality_score
+        }
+        
+        return thought_memory
     
     def decode(self, tgt, memory, tgt_mask=None, memory_mask=None):
         """Decode to generate response"""
@@ -617,14 +816,13 @@ class TransformerDialogueAI(nn.Module):
         
         # Check if input indices are out of range
         if src.max() >= self.vocab_size:
-            print(f"Error: Input contains indices beyond vocabulary! max_index={src.max()}, vocab_size={self.vocab_size}")
-            # Replace out-of-range indices with UNK
+            print(f"Warning: Input contains indices beyond vocabulary! max_index={src.max()}, vocab_size={self.vocab_size}")
             src = torch.clamp(src, 0, self.vocab_size - 1)
         
         # Encode input
         memory = self.encode(src)
         
-        # Thinking process
+        # Enhanced thinking process with diagnostics
         thought_memory = self.thinking_process(memory, knowledge_vector, memory_vector, personality_vector)
         
         # Decode
@@ -633,25 +831,20 @@ class TransformerDialogueAI(nn.Module):
             tgt_input = tgt[:, :-1]
             tgt_output = tgt[:, 1:]
             
-            # Check if target indices are out of range
             if tgt_input.max() >= self.vocab_size:
                 tgt_input = torch.clamp(tgt_input, 0, self.vocab_size - 1)
             
-            # Create target sequence mask
             tgt_mask = self.generate_square_subsequent_mask(tgt_input.size(1)).to(device)
             
-            # Decode
             decoder_output = self.decode(tgt_input, thought_memory, 
                                        tgt_mask=tgt_mask, memory_mask=None)
             
-            # Transpose output to match target shape
             decoder_output = decoder_output.transpose(0, 1)
         else:
-            # Inference mode - generate response
             decoder_output, generated_tokens = self.generate_autoregressive(thought_memory, batch_size, device)
             tgt_output = None
         
-        # Analyze sentiment and topics
+        # Enhanced sentiment and topics analysis with thinking context
         context_representation = thought_memory[:, 0, :]
         sentiment = self.sentiment_analysis(context_representation)
         topics = self.topic_analysis(context_representation)
@@ -661,7 +854,8 @@ class TransformerDialogueAI(nn.Module):
             'sentiment': sentiment,
             'topics': topics,
             'memory': thought_memory,
-            'generated_tokens': generated_tokens if tgt is None else None
+            'generated_tokens': generated_tokens if tgt is None else None,
+            'thinking_diagnostics': self.thinking_diagnostics
         }
     
     def generate_autoregressive(self, memory, batch_size, device):
@@ -1065,11 +1259,11 @@ class SerlinTransformer:
             vocab_size=self.processor.vocab_size,
             d_model=d_model,
             idx2word=self.processor.idx2word,
-            nhead=nhead,
-            num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers,
-            think_steps=think_steps,
-            max_length=max_length
+            nhead=serlin_config.nhead,
+            num_encoder_layers=serlin_config.num_encoder_layers,
+            num_decoder_layers=serlin_config.num_decoder_layers,
+            think_steps=serlin_config.think_steps,
+            max_length=serlin_config.max_length
         )
     
         # Initialize trainer
@@ -1351,9 +1545,30 @@ class SerlinTransformer:
         return result['response']
     
     def _display_enhanced_thinking(self, result, user_input):
-        """Display enhanced thinking process"""
+        """Display enhanced thinking process with detailed reasoning"""
         print(f"User input: '{user_input}'")
-        print("Serlin thinking process:")
+        print("Serlin enhanced thinking process:")
+        
+        # Display thinking diagnostics if available
+        if 'thinking_diagnostics' in result:
+            diagnostics = result['thinking_diagnostics']
+            
+            print("Reasoning Diagnostics:")
+            if 'confidence_scores' in diagnostics and diagnostics['confidence_scores'] is not None:
+                conf_scores = diagnostics['confidence_scores'].squeeze().tolist()
+                print(f"  Step confidence scores: {[f'{score:.3f}' for score in conf_scores]}")
+            
+            if 'thinking_weights' in diagnostics:
+                thinking_weights = diagnostics['thinking_weights'].squeeze().tolist()
+                print(f"  Thinking step weights: {[f'{weight:.3f}' for weight in thinking_weights]}")
+            
+            if 'thinking_quality' in diagnostics:
+                quality_score = diagnostics['thinking_quality'].item()
+                print(f"  Overall thinking quality: {quality_score:.3f}")
+            
+            if 'context_analysis' in diagnostics:
+                context_analysis = diagnostics['context_analysis'].squeeze().tolist()
+                print(f"  Context analysis: {context_analysis}")
         
         print("Analysis results:")
         print(f"  Sentiment value: {result['sentiment_value']:.3f}")
@@ -1372,6 +1587,9 @@ class SerlinTransformer:
         
         # Display knowledge and memory usage
         self._display_knowledge_memory_usage(result)
+        
+        # Display thinking process summary
+        print("Thinking process completed")
     
     def _display_knowledge_memory_usage(self, result):
         """Display knowledge and memory usage"""
